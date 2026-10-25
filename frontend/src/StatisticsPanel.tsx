@@ -1,0 +1,77 @@
+export type Diagnostic = { status: string; p_value: number | null; reason: string }
+export type GroupResult = {
+  condition: string; samples: string[]; n: number; incomplete_n: number
+  fold_change_mean: number | null; fold_change_sd: number | null
+  is_baseline: boolean; above_threshold: boolean | null
+  replicates_above_threshold: number | null; normality: Diagnostic
+}
+export type StatisticalResult = {
+  method: string; software: string; alpha: number; adjustment: string; family: string
+  warnings: string[]; groups: GroupResult[]; control_normality: Diagnostic
+  comparisons: { condition: string; n: number; control_n: number; status: string
+    p_value: number | null; adjusted_p_value: number | null; reason: string
+    delta_ct_difference?: number; delta_ct_ci?: number[] }[]
+}
+const number = (value: number | null | undefined) => value == null ? '—' : value.toPrecision(4)
+
+export function StatisticsResults({ result }: { result?: StatisticalResult }) {
+  if (!result) return <p>Calculate a new analysis to see biological replicate summaries and diagnostics.</p>
+  return <section className="panel">
+    <h3>Biological replicate summary</h3>
+    <p>Mean fold change ± sample SD. Each dot is one biological sample. Missing samples do not contribute to n.</p>
+    <div className="condition-cards">{result.groups.map(group => <article className="condition-card" key={group.condition}>
+      <h4>{group.condition}</h4>
+      <strong>{number(group.fold_change_mean)}×</strong><span> ± {number(group.fold_change_sd)} SD</span>
+      <p>n = {group.n}; incomplete = {group.incomplete_n}</p>
+      <p>{group.is_baseline ? 'Baseline condition' : group.above_threshold ? 'Mean meets effect threshold' : 'Mean below effect threshold'}</p>
+      {!group.is_baseline && <p>{group.replicates_above_threshold}/{group.n} biological replicates meet threshold</p>}
+      <details><summary>Normality diagnostic</summary><p>{group.normality.status}; p = {number(group.normality.p_value)}. {group.normality.reason}</p></details>
+    </article>)}</div>
+    <h3>Comparisons to baseline</h3>
+    <p>{result.method === 'welch' ? 'Two-sided Welch tests on biological-sample ΔCt; Holm-adjusted within this analysis.' : 'Descriptive analysis. No significance test was requested.'}</p>
+    <p>Baseline normality: {result.control_normality.status}; p = {number(result.control_normality.p_value)}. {result.control_normality.reason}</p>
+    <div className="results-table-wrap"><table><thead><tr><th>Condition</th><th>Biological n / control n</th><th>Raw p</th><th>Holm p</th><th>ΔCt difference / individual 95% CI</th><th>Interpretation</th></tr></thead>
+      <tbody>{result.comparisons.map(c => <tr key={c.condition}><td>{c.condition}</td><td>{c.n} / {c.control_n}</td><td>{number(c.p_value)}</td><td>{number(c.adjusted_p_value)}</td>
+        <td>{number(c.delta_ct_difference)} {c.delta_ct_ci && ` [${c.delta_ct_ci.map(number).join(', ')}]`}</td>
+        <td>{c.status === 'tested' ? (c.adjusted_p_value! < result.alpha ? 'Evidence of a difference under stated assumptions. ' : 'Insufficient evidence of a difference. ') : 'Not tested. '}{c.reason}</td></tr>)}</tbody></table></div>
+    <p>Comparison family: {result.family}. {result.software}.</p>
+    <ul>{result.warnings.map(w => <li key={w}>{w}</li>)}</ul>
+  </section>
+}
+
+export function StatisticsExplanation() {
+  return <section className="panel methodology">
+    <h3>Why these statistics, and what do they mean?</h3>
+    <p>The experiment determines the statistical method. A normality test alone cannot choose the right test. This release supports descriptive summaries and explicitly confirmed independent-group comparisons. Paired, repeated-measure and complex designs require a different model.</p>
+    <details open><summary>1. What counts as a replicate?</summary>
+      <p>A biological replicate is a separately prepared biological sample, such as a separately transfected culture well. Repeated qPCR measurements of that same material are technical replicates. We average technical Ct measurements first; four technical wells from two biological samples still give biological n = 2.</p>
+      <p>Assign condition labels in setup. Sample-name suffixes suggest grouping but never establish independence or pairing. Confirm the experimental unit with your protocol.</p>
+    </details>
+    <details><summary>2. How are ΔCt, ΔΔCt and fold change calculated?</summary>
+      <p>ΔCt = mean target Ct − mean of the selected reference-assay Ct means. All selected references must be present. ΔΔCt subtracts the mean ΔCt of the selected baseline biological samples. Fold change = 2^(−ΔΔCt), assuming comparable amplification efficiencies consistent with this method.</p>
+      <p>Reference Ct means are averaged arithmetically, corresponding to a geometric mean of relative quantities under those assumptions. The historical LAD081 workbook instead takes a geometric mean of Ct numbers; new results can therefore differ. The mean of biological fold changes also differs from exponentiating the mean ΔΔCt.</p>
+      <p>Baseline replicates need not individually equal 1×. Their average ΔCt defines zero ΔΔCt; their arithmetic mean fold change need not equal exactly 1×.</p>
+    </details>
+    <details><summary>3. Why test ΔCt rather than fold changes?</summary>
+      <p>Exponentiation makes fold changes asymmetric. Tests here compare biological-sample ΔCt values while retaining variability in both treatment and controls. Fold change communicates effect size. A negative treatment-minus-control ΔCt difference indicates higher normalized expression.</p>
+    </details>
+    <details><summary>4. What does the normality check tell me?</summary>
+      <p>Shapiro–Wilk checks compatibility with a normal distribution. It requires at least three observations and is not informative for constant data. With small samples, a large p-value is weak evidence about distribution shape; it does not prove normality. With two biological samples, normality is reported as not assessable.</p>
+      <p>Diagnostics here concern each independent group's ΔCt. Paired tests would instead need diagnostics of within-pair differences. We do not silently switch to a rank test after a small normality p-value: those tests have different assumptions and interpretations.</p>
+    </details>
+    <details><summary>5. Why Welch tests and Holm correction?</summary>
+      <p>For independent biological groups with an appropriate distribution model, Welch's two-sided t-test compares means without assuming equal variances. Independence and distribution assumptions require researcher confirmation. The app cannot verify these from Ct values alone. Very small samples produce fragile estimates and are labelled exploratory.</p>
+      <p>Each non-baseline condition is compared with the selected control samples. Holm correction accounts for testing several conditions within this saved analysis. Unestimable planned comparisons remain in the family conservatively. Tests across different genes or separately saved analyses are not corrected together.</p>
+    </details>
+    <details><summary>6. What do p-values, confidence intervals and the hit threshold mean?</summary>
+      <p>A p-value measures how incompatible the observed contrast is with equal population means under the model. It is not the probability that the saRNA works. Adjusted p &lt; 0.05 is evidence under the stated assumptions; a larger p does not demonstrate no effect.</p>
+      <p>The individual 95% confidence interval describes uncertainty in a treatment-minus-control mean ΔCt difference. It is not a simultaneous interval across all comparisons. SD in the chart describes between-sample spread, not confidence in the mean.</p>
+      <p>The adjustable 1.5× threshold is a screening effect criterion. Crossing it does not establish statistical significance or reproducibility. The dashboard separately reports the mean crossing and the number of biological samples crossing.</p>
+    </details>
+    <details><summary>7. Missing data, exclusions and reproducibility</summary>
+      <p>Missing or undetermined Ct values are never replaced by zero. A sample missing a required reference has no normalized result. Every selected baseline sample must be complete. Sample exclusions apply only to a saved analysis; raw uploads remain intact. Exclusion reasons and settings are retained in analysis history.</p>
+      <p>Do not combine instrument runs as if they were independent biological experiments. Positive-control failure needs a protocol-specific success rule; this release does not infer that rule or declare controls passed automatically.</p>
+    </details>
+    <p>Method references: <a href="https://www.gene-quantification.de/miqe.html" target="_blank" rel="noreferrer">MIQE reporting guidance</a>, <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.shapiro.html" target="_blank" rel="noreferrer">Shapiro–Wilk</a>, <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.ttest_ind.html" target="_blank" rel="noreferrer">Welch test and confidence intervals</a>, <a href="https://www.statsmodels.org/stable/generated/statsmodels.stats.multitest.multipletests.html" target="_blank" rel="noreferrer">multiple-comparison methods</a>.</p>
+  </section>
+}

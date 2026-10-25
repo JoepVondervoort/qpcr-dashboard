@@ -1,0 +1,40 @@
+Build a working qPCR analysis application in this new repository.
+
+PRODUCT GOAL
+
+Create a browser-based research workbench for laboratory colleagues who
+do not program. They must be able to upload qPCR results, confirm samples
+and plate layouts, inspect measurement quality, calculate expression
+changes, compare experiments, and export meeting/publication figures.
+
+The main use case is screening small activating RNA (saRNA) designs.
+Also support time-course, culture-condition, reference-gene evaluation,
+storage/handling, and assay-reproducibility experiments.
+
+Deliver functioning software with persistent storage and verified
+calculations—not just a dashboard mockup.
+
+WORKING APPROACH
+
+Inspect repository instructions and available example files first.
+Write a concise implementation plan, then implement it.
+
+Make routine implementation decisions autonomously. Ask questions only
+when missing information affects scientific correctness or interpretation.
+Continue independent work while questions remain unresolved.
+
+Do not silently invent sample identities, biological independence,
+control assignments, or plate boundaries.
+
+Keep unresolved imported data editable and prevent affected calculations
+from appearing complete.
+
+Do not deploy publicly unless requested.
+
+ARCHITECTURE
+
+Use:
+- Python for the scientific engine and import processing.
+- FastAPI with Pydantic for the service boundary.
+- SQLite for initial persistent storage.
+- React with TypeScript and Vite for the browser

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+
+import pytest
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -74,6 +76,8 @@ def test_import_qpcr_file_handles_csv(tmp_path) -> None:
 
 def test_lad081_import_uses_only_quantstudio_raw_sections() -> None:
     workbook_path = Path(__file__).resolve().parents[1] / "Analysis LAD081_ qPCR_09042026_example.xlsx"
+    if not workbook_path.exists():
+        pytest.skip("Optional private LAD081 development workbook is not installed.")
     parsed = import_qpcr_file(str(workbook_path))
 
     assert parsed["record_count"] == 560

@@ -108,3 +108,12 @@ The upgrade roadmap is in [docs/upgrade-plan.md](docs/upgrade-plan.md). Local
 single-launcher packaging, cross-experiment comparisons and private hosted
 accounts remain subsequent work. The current development startup commands above
 still apply; install the updated backend requirements (including SciPy).
+
+## Private development inputs
+
+Research workbooks, thesis PDFs, local databases, uploads and backups are ignored
+by Git. Keep them on your computer; they are not needed to install the app.
+The LAD081 workbook checks run when that local file is available and otherwise
+skip. Synthetic calculation and CSV tests run without private research inputs.
+Do not force-add research files to commits. Ignoring a file does not remove a
+copy already present in an earlier commit's history.

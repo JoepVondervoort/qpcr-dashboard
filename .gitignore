@@ -1,0 +1,26 @@
+# Private development inputs (keep local; use synthetic fixtures in Git).
+*.xlsx
+*.xlsm
+*.xls
+*.pdf
+local-data/
+
+# Local research data and backups.
+backend/data/
+backend/uploads/
+backups/
+*.db
+*.db-shm
+*.db-wal
+
+# Generated files and local environments.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example

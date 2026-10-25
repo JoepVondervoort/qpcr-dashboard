@@ -107,6 +107,8 @@ def test_zero_variance_comparison_not_tested():
 
 def test_lad081_grouped_day_zero():
     path = Path(__file__).resolve().parents[1]/'Analysis LAD081_ qPCR_09042026_example.xlsx'
+    if not path.exists():
+        pytest.skip("Optional private LAD081 development workbook is not installed.")
     parsed = import_qpcr_file(str(path))
     for run in parsed['runs']:
         rows = [r for r in parsed['records'] if r['run_id']==run['id']]

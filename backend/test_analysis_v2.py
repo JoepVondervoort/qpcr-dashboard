@@ -185,3 +185,137 @@ def test_unestimable_comparisons_remain_in_holm_family():
     assert result['statistics']['tested_comparison_count']==1
     tested = next(c for c in comparisons if c['status']=='tested')
     assert tested['adjusted_p_value']==pytest.approx(min(1,2*tested['p_value']))
+
+
+def test_upload_rejects_empty_layout_without_saving_experiment(tmp_path, monkeypatch):
+    api = importlib.import_module('backend.app')
+    monkeypatch.setattr(api, 'DB_PATH', tmp_path/'test.db')
+    monkeypatch.setattr(api, 'UPLOAD_DIR', tmp_path)
+    api.init_db()
+    project = api.create_project({'name':'empty-layout-test'})
+    with tempfile.SpooledTemporaryFile() as upload:
+        upload.write(b'Not,An,Instrument,Export\n1,2,3,4\n')
+        upload.seek(0)
+        with pytest.raises(HTTPException, match='No raw Ct/Cq') as error:
+            asyncio.run(api.upload_experiment(project['id'], UploadFile(filename='empty.csv', file=upload), 'empty'))
+    assert error.value.status_code == 422
+    assert api.list_experiments(project['id']) == []
+    assert not list(tmp_path.glob('*.csv'))
+
+
+def test_synthetic_workbook_preserves_multiple_runs_and_ignores_derived_tabs(tmp_path):
+    from openpyxl import Workbook
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = 'Instrument results'
+    for run in ['run-one', 'run-two']:
+        sheet.append(['Experiment Name', run])
+        sheet.append(['Block Type', '384-Well'])
+        sheet.append(['Well Position','Sample Name','Target Name','CT'])
+        sheet.append(['A1', 'baseline.1', 'TARGET', 22])
+        sheet.append(['A2', 'baseline.1', 'REF', 20])
+        sheet.append([None])
+    derived = workbook.create_sheet('Calculated results')
+    derived.append(['Well Position','Sample Name','Target Name','CT'])
+    derived.append(['A1', 'baseline.1', 'TARGET', 999])
+    path = tmp_path/'synthetic.xlsx'
+    workbook.save(path)
+    parsed = import_qpcr_file(str(path))
+    assert parsed['record_count'] == 4
+    assert [r['name'] for r in parsed['runs']] == ['run-one', 'run-two']
+    assert [r['record_count'] for r in parsed['runs']] == [2,2]
+    assert {r['sheet'] for r in parsed['records']} == {'Instrument results'}
+    assert all(r['ct'] != 999 for r in parsed['records'])
+
+
+@pytest.mark.parametrize('name', ['H2O','h2o','H₂O','H 2 O','H20','H2O.1','H2O_2','H2O-control','water','Water 1','NTC','NTC-2','no-template control','No template','nuclease-free water','control H2O'])
+def test_technical_control_names(name):
+    from backend.qpcr_engine.sample_roles import is_technical_control
+    assert is_technical_control(name)
+
+
+@pytest.mark.parametrize('name', ['H2O2','water treatment','Waterloo','SCR.1','p21.1','saRNA-10.1','negative control','day 0.1'])
+def test_biological_labels_not_silently_classified_as_technical(name):
+    from backend.qpcr_engine.sample_roles import is_technical_control
+    assert not is_technical_control(name)
+
+
+def test_technical_controls_do_not_affect_normalization_groups_or_statistics():
+    original = calculate(statistics_method='welch', assumptions_confirmed=True)
+    rows = records()+[dict(sample='H₂O control', assay='T', ct=10),dict(sample='H₂O control', assay='R',ct=35)]
+    groups = original['sample_groups'] | {'H₂O control':'water must not become a biological group'}
+    result = calculate(rows, sample_groups=groups, statistics_method='welch', assumptions_confirmed=True)
+    assert result['samples'] == original['samples']
+    assert result['statistics'] == original['statistics']
+    assert result['technical_control_samples'] == ['H₂O control']
+    assert result['technical_control_measurement_count'] == 2
+    assert 'H₂O control' not in result['sample_groups']
+    with pytest.raises(ValueError, match='Technical controls'):
+        calculate(rows,baseline_samples=['H₂O control'])
+    override = calculate(rows,technical_control_samples=[])
+    assert any(r['sample']=='H₂O control' for r in override['samples'])
+    assert rows[-1]['sample']=='H₂O control'  # raw records stay intact
+
+
+def test_sample_time_suggestions_preserve_series_without_asserting_pairing():
+    from backend.qpcr_engine.sample_metadata import infer_sample_metadata
+    first=infer_sample_metadata('LAD081_HDFn_confluency_100% day 0.1')
+    later=infer_sample_metadata('LAD081_HDFn_confluency_100% day 21.2')
+    assert first['series']==later['series']=='LAD081_HDFn_confluency_100%'
+    assert first['timepoint']==0 and later['timepoint']==21
+    assert first['replicate']=='1' and later['replicate']=='2'
+    assert infer_sample_metadata('saRNA-10.2')['timepoint'] is None
+    assert infer_sample_metadata('saRNA-10.2')['condition']=='saRNA-10'
+    assert infer_sample_metadata('treatment hour 24.1')['time_unit']=='hour'
+
+
+def prepare_batch_experiment(tmp_path, monkeypatch):
+    import csv
+    api=importlib.import_module('backend.app')
+    monkeypatch.setattr(api,'DB_PATH',tmp_path/'test.db')
+    monkeypatch.setattr(api,'UPLOAD_DIR',tmp_path)
+    api.init_db()
+    project=api.create_project({'name':'batch-fixture'})
+    rows=records()
+    for sample in {r['sample'] for r in rows}:
+        target=next(r['ct'] for r in rows if r['sample']==sample and r['assay']=='T')
+        rows.extend([dict(sample=sample,assay='T2',ct=target+1),dict(sample=sample,assay='UNDET',ct='Undetermined')])
+    output=io.StringIO()
+    writer=csv.writer(output)
+    writer.writerow(['Well','Sample Name','Target Name','CT'])
+    for i,row in enumerate(rows):writer.writerow([f'{chr(65+i//12)}{i%12+1}',row['sample'],row['assay'],row['ct']])
+    with tempfile.SpooledTemporaryFile() as upload:
+        upload.write(output.getvalue().encode());upload.seek(0)
+        experiment=asyncio.run(api.upload_experiment(project['id'],UploadFile(filename='batch.csv',file=upload),'batch'))
+    return api,project,experiment
+
+
+def test_batch_saves_every_valid_target_and_corrects_across_all_targets(tmp_path, monkeypatch):
+    api,project,experiment=prepare_batch_experiment(tmp_path,monkeypatch)
+    payload=api.BatchAnalysisRequest(target_assays=['T','T2','UNDET'],reference_assays=['R'],baseline_samples=['base.1','base.2'],
+        experiment_design=api.ExperimentDesign(time_origin='transfection',experimental_unit='independent culture well',design_type='independent',confirmed=True),run_id=experiment['runs'][0]['id'],sample_groups={s:s.rsplit('.',1)[0] for s in ['base.1','base.2','drug.1','drug.2','other.1','other.2']},statistics_method='welch',assumptions_confirmed=True)
+    api.update_experiment_design(project['id'],experiment['id'],payload.experiment_design)
+    result=api.analyze_batch(project['id'],experiment['id'],payload)
+    assert len(result['results'])==2
+    assert result['errors'][0]['target_assay']=='UNDET'
+    assert len(api.list_analysis_versions(project['id'],experiment['id']))==2
+    contrasts=[c for r in result['results'] for c in r['statistics']['comparisons']]
+    # Two planned contrasts for each of three targets; failed target remains in family.
+    expected=holm([c['p_value'] for c in contrasts]+[1,1])
+    assert [c['adjusted_p_value'] for c in contrasts]==pytest.approx(expected[:4])
+    assert all(r['statistics']['batch_planned_comparison_count']==6 for r in result['results'])
+    assert all(r['batch_id']==result['batch_id'] for r in result['results'])
+    assert all(r['batch_errors']==result['errors'] for r in result['results'])
+    assert api.get_experiment(project['id'],experiment['id'])['analysis_result']['target_assay']=='T2'
+
+
+def test_sample_mapping_is_editable_persistent_and_raw_data_unchanged(tmp_path, monkeypatch):
+    api,project,experiment=prepare_batch_experiment(tmp_path,monkeypatch)
+    before=api.get_experiment(project['id'],experiment['id'])
+    annotations=api.update_sample_metadata(project['id'],experiment['id'],{'drug.1':api.SampleAnnotation(condition='candidate day 7',series='candidate',timepoint=7,time_unit='day',replicate='1')})
+    after=api.get_experiment(project['id'],experiment['id'])
+    assert after['sample_metadata']['drug.1']==annotations['drug.1']
+    assert after['sample_metadata']['base.1']['replicate']=='1'
+    assert after['raw_records']==before['raw_records']
+    with pytest.raises(HTTPException):
+        api.update_sample_metadata(project['id'],experiment['id'],{'unknown':api.SampleAnnotation(condition='x',series='x')})

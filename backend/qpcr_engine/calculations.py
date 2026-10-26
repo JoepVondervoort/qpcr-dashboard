@@ -5,6 +5,8 @@ from statistics import mean, stdev
 import math
 
 from .statistics import summarize_groups
+from .sample_roles import is_technical_control
+from .review import measurement_id
 from typing import Any
 
 
@@ -30,6 +32,8 @@ def summarize_results(
     statistics_method: str = "descriptive",
     assumptions_confirmed: bool = False,
     excluded_samples: list[str] | None = None,
+    technical_control_samples: list[str] | None = None,
+    excluded_measurements: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     if not target_assay:
         raise ValueError("Select a target assay.")
@@ -58,13 +62,16 @@ def summarize_results(
         raise ValueError("The selected run has no imported measurements.")
 
     run_sample_names = {str(r.get("sample")) for r in raw_records if run_id is None or r.get("run_id") == run_id}
-    unknown = (set(baselines) | set(sample_groups or {}) | excluded) - run_sample_names
+    technical = set(technical_control_samples) if technical_control_samples is not None else {s for s in run_sample_names if is_technical_control(s)}
+    if technical.intersection(baselines):
+        raise ValueError("Technical controls cannot define a biological baseline. Change their role explicitly if the label was misclassified.")
+    unknown = (set(baselines) | set(sample_groups or {}) | excluded | technical) - run_sample_names
     if unknown:
         raise ValueError(f"Unknown sample assignments in the selected run: {', '.join(sorted(unknown))}.")
     run_records = [
         record
         for record in raw_records
-        if (run_id is None or record.get("run_id") == run_id) and record.get("sample") not in excluded
+        if (run_id is None or record.get("run_id") == run_id) and record.get("sample") not in (excluded | technical)
     ]
     assays = sorted(
         {
@@ -81,6 +88,10 @@ def summarize_results(
             f"Reference assay(s) not present in this run: {', '.join(missing_references)}."
         )
 
+    excluded_wells = excluded_measurements or {}
+    known_measurements = {measurement_id(r) for r in raw_records}
+    if set(excluded_wells) - known_measurements or any(not reason.strip() for reason in excluded_wells.values()):
+        raise ValueError("Well exclusions require a valid measurement identity and a reason.")
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     all_samples = sorted(
         {
@@ -90,7 +101,7 @@ def summarize_results(
         }
     )
     for record in run_records:
-        if record.get("ct") is not None and math.isfinite(float(record["ct"])) and not record.get("omit", False):
+        if record.get("ct") is not None and math.isfinite(float(record["ct"])) and not record.get("omit", False) and measurement_id(record) not in excluded_wells:
             grouped[(str(record["sample"]), str(record["assay"]))].append(record)
 
     def assay_values(sample: str, assay: str) -> list[float]:
@@ -163,12 +174,16 @@ def summarize_results(
             }
         )
 
-    statistics = summarize_groups(rows, sample_groups or {}, baselines, hit_threshold, statistics_method, assumptions_confirmed)
+    biological_groups = {s: g for s, g in (sample_groups or {}).items() if s not in technical and s not in excluded}
+    statistics = summarize_groups(rows, biological_groups, baselines, hit_threshold, statistics_method, assumptions_confirmed)
     return {
-        "method_version": "2.0",
+        "method_version": "3.0",
         "baseline_samples": baselines,
-        "sample_groups": sample_groups or {},
+        "sample_groups": biological_groups,
         "excluded_samples": sorted(excluded),
+        "excluded_measurements": excluded_wells,
+        "technical_control_samples": sorted(technical),
+        "technical_control_measurement_count": sum(1 for r in raw_records if (run_id is None or r.get("run_id") == run_id) and r.get("sample") in technical),
         "hit_threshold": hit_threshold,
         "statistics": statistics,
         "run_id": run_id,

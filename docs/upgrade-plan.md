@@ -2,6 +2,15 @@
 
 Planning baseline: 25 October 2026. The delivery sequence below is the roadmap; the status here distinguishes implemented work from future work.
 
+## Workbook dashboard upgrade
+
+Implemented: separate setup/dashboard tabs; raw Ct facets for all target and reference assays;
+run/assay/condition/time filters; editable persistent sample/time mapping; condition-mean
+trajectories without inferred pairing; all-target normalization per run with explicit failure
+panels; Holm adjustment across assay/condition contrasts in an inferential batch; self-contained
+SVG exports, print layout, biological n and consistent condition colours. Cross-experiment
+pooling and paired/repeated-measure models remain planned.
+
 ## First implementation status
 
 Implemented locally: grouped baseline biological samples; editable suggested conditions and common-reference/day-zero suggestions; required-reference completeness; sample exclusions with reasons; sample SD; biological condition charts; adjustable hit threshold; normality diagnostics; explicitly confirmed independent Welch comparisons with Holm correction; clickable statistics explanation; saved analysis versions, input hashes and snapshot JSON exports. Existing saved analyses are retained during initialization.

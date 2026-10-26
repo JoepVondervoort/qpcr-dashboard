@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import xml.etree.ElementTree as ET
 
 import pytest
 from pathlib import Path
@@ -160,6 +161,15 @@ def test_upload_and_analysis_flow() -> None:
     svg_export = client.get(f"/api/projects/{project_id}/experiments/{experiment_id}/export.svg")
     assert svg_export.status_code == 200
     assert "1× baseline" in svg_export.text
+    root = ET.fromstring(svg_export.text)
+    ns = {'s': 'http://www.w3.org/2000/svg'}
+    anchor = next(float(line.attrib['y1']) for line in root.findall('s:line', ns) if 'stroke-dasharray' in line.attrib)
+    bars = [rect for rect in root.findall('s:rect', ns) if rect.attrib.get('fill') == '#3b82f6']
+    assert len(bars) == 2
+    assert float(bars[0].attrib['height']) == 0  # exactly 1x
+    assert float(bars[1].attrib['y']) == anchor  # downregulation descends from 1x
+    assert float(bars[1].attrib['height']) > 0
+
 
     with get_db() as conn:
         uploaded_paths = [

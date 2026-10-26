@@ -6,6 +6,7 @@ export type GroupResult = {
   replicates_above_threshold: number | null; normality: Diagnostic
 }
 export type StatisticalResult = {
+  design_confirmed?:boolean
   method: string; software: string; alpha: number; adjustment: string; family: string
   warnings: string[]; groups: GroupResult[]; control_normality: Diagnostic
   comparisons: { condition: string; n: number; control_n: number; status: string
@@ -28,7 +29,7 @@ export function StatisticsResults({ result }: { result?: StatisticalResult }) {
       <details><summary>Normality diagnostic</summary><p>{group.normality.status}; p = {number(group.normality.p_value)}. {group.normality.reason}</p></details>
     </article>)}</div>
     <h3>Comparisons to baseline</h3>
-    <p>{result.method === 'welch' ? 'Two-sided Welch tests on biological-sample ΔCt; Holm-adjusted within this analysis.' : 'Descriptive analysis. No significance test was requested.'}</p>
+    <p>{result.method === 'welch' ? 'Two-sided Welch tests on biological-sample ΔCt; Holm-adjusted across the declared comparison family below.' : 'Descriptive analysis. No significance test was requested.'}</p>
     <p>Baseline normality: {result.control_normality.status}; p = {number(result.control_normality.p_value)}. {result.control_normality.reason}</p>
     <div className="results-table-wrap"><table><thead><tr><th>Condition</th><th>Biological n / control n</th><th>Raw p</th><th>Holm p</th><th>ΔCt difference / individual 95% CI</th><th>Interpretation</th></tr></thead>
       <tbody>{result.comparisons.map(c => <tr key={c.condition}><td>{c.condition}</td><td>{c.n} / {c.control_n}</td><td>{number(c.p_value)}</td><td>{number(c.adjusted_p_value)}</td>
@@ -61,7 +62,7 @@ export function StatisticsExplanation() {
     </details>
     <details><summary>5. Why Welch tests and Holm correction?</summary>
       <p>For independent biological groups with an appropriate distribution model, Welch's two-sided t-test compares means without assuming equal variances. Independence and distribution assumptions require researcher confirmation. The app cannot verify these from Ct values alone. Very small samples produce fragile estimates and are labelled exploratory.</p>
-      <p>Each non-baseline condition is compared with the selected control samples. Holm correction accounts for testing several conditions within this saved analysis. Unestimable planned comparisons remain in the family conservatively. Tests across different genes or separately saved analyses are not corrected together.</p>
+      <p>Each non-baseline condition is compared with the selected control samples. Holm correction accounts for multiple comparisons. In single-assay mode, the family contains the condition-versus-control comparisons for that assay. In all-target mode, it contains all planned target-assay/condition comparisons in that batch and run. Unestimable planned comparisons remain in the family conservatively. Separate batches and runs are not corrected together automatically.</p>
     </details>
     <details><summary>6. What do p-values, confidence intervals and the hit threshold mean?</summary>
       <p>A p-value measures how incompatible the observed contrast is with equal population means under the model. It is not the probability that the saRNA works. Adjusted p &lt; 0.05 is evidence under the stated assumptions; a larger p does not demonstrate no effect.</p>
@@ -69,9 +70,10 @@ export function StatisticsExplanation() {
       <p>The adjustable 1.5× threshold is a screening effect criterion. Crossing it does not establish statistical significance or reproducibility. The dashboard separately reports the mean crossing and the number of biological samples crossing.</p>
     </details>
     <details><summary>7. Missing data, exclusions and reproducibility</summary>
-      <p>Missing or undetermined Ct values are never replaced by zero. A sample missing a required reference has no normalized result. Every selected baseline sample must be complete. Sample exclusions apply only to a saved analysis; raw uploads remain intact. Exclusion reasons and settings are retained in analysis history.</p>
+      <p>H₂O, water and no-template control labels are suggested as technical controls. Their raw measurements are preserved, but they are excluded from expression results, baselines and statistics. Roles can be overridden in setup when a label was misclassified. Missing or undetermined Ct values are never replaced by zero. A sample missing a required reference has no normalized result. Every selected baseline sample must be complete. Sample exclusions apply only to a saved analysis; raw uploads remain intact. Exclusion reasons and settings are retained in analysis history.</p>
       <p>Do not combine instrument runs as if they were independent biological experiments. Positive-control failure needs a protocol-specific success rule; this release does not infer that rule or declare controls passed automatically.</p>
     </details>
+    <details><summary>8. Study design, QC review and saved result validity</summary><p>Inferential analysis requires a recorded experimental unit, time origin and confirmed independent-group design, plus explicit distribution-assumption confirmation. Paired, blocked and repeated-measure designs support descriptive output until an appropriate model is implemented. Repeated biological-unit IDs cannot be counted as independent sample instances.</p><p>Technical-control signals and large technical Ct ranges are review flags, not diagnoses. Well exclusions and restorations need reasons and are retained in an audit trail. Previewing an exclusion does not save results or perform inferential tests. Changing mappings, design or well exclusions makes previous results stale; rebuilding creates new versions. The overview selects one coherent settings profile per run instead of silently mixing analyses made with different references or baselines.</p></details>
     <p>Method references: <a href="https://www.gene-quantification.de/miqe.html" target="_blank" rel="noreferrer">MIQE reporting guidance</a>, <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.shapiro.html" target="_blank" rel="noreferrer">Shapiro–Wilk</a>, <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.ttest_ind.html" target="_blank" rel="noreferrer">Welch test and confidence intervals</a>, <a href="https://www.statsmodels.org/stable/generated/statsmodels.stats.multitest.multipletests.html" target="_blank" rel="noreferrer">multiple-comparison methods</a>.</p>
   </section>
 }

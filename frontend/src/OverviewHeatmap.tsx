@@ -1,0 +1,18 @@
+import type {AnalysisResult,RawRecord,SampleMetadata} from './types'
+import {sampleAnnotation,mean,categoryLabel,seriesLabel} from './plotData'
+export type Availability={run:string;assay:string;result?:AnalysisResult;reason:string;stale:boolean;reference?:boolean}
+export function OverviewHeatmap({records,annotations,targets,availability,onInspect}:{records:RawRecord[];annotations:Record<string,SampleMetadata>;targets:string[];availability:Availability[];onInspect:(assay:string)=>void}) {
+ const columns=[...new Map(records.map(r=>{const m=sampleAnnotation(annotations,r.run_id,r.sample);const key=JSON.stringify([r.run_id,m.series,m.time_unit,m.timepoint??m.condition]);return [key,{key,run:r.run_id,runName:r.run_name,series:m.series,time:m.timepoint,unit:m.time_unit,condition:m.condition,label:categoryLabel(m)}]})).values()].sort((a,b)=>a.series.localeCompare(b.series)||a.run.localeCompare(b.run)||(a.time??0)-(b.time??0))
+ function cell(assay:string,col:typeof columns[number]) {
+  const item=availability.find(v=>v.run===col.run&&v.assay===assay),result=item?.result
+  const values=result?.samples.flatMap(row=>{const m=sampleAnnotation(result.sample_instances??result.sample_metadata,col.run,row.sample);const match=m.series===col.series&&m.timepoint===col.time&&m.time_unit===col.unit&&(m.timepoint!=null||m.condition===col.condition);return match&&row.fold_change!=null&&result.sample_groups?.[row.sample]?[row.fold_change]:[]})??[]
+  const avg=mean(values)
+  const log=avg!=null&&avg>0?Math.log2(avg):null
+  const amount=log==null?0:Math.min(1,Math.abs(log)/3)
+  const bg=log==null?'#f2f4f5':log>=0?`rgba(22,123,128,${.08+.68*amount})`:`rgba(181,100,69,${.08+.68*amount})`
+  const label=item?.reference?'Reference':avg==null?(item?.stale?'Stale':item?.reason?'Unavailable':'Not calculated'):`${Number(avg.toPrecision(3))}×`
+  return <td key={col.key}><button className={`heat-cell ${item?.stale?'stale-cell':''}`} style={{background:bg,color:amount>.65?'white':'#294c55'}} onClick={()=>onInspect(assay)} title={`${assay} · ${seriesLabel(col.series)} · ${col.runName} · ${col.label}\n${item?.stale?'STALE · rebuild required\n':''}${avg==null?item?.reason??'No complete sample results':`Mean fold change ${avg}; biological n=${values.length}; log2(mean fold change)=${log}`}\nClick to inspect source measurements.`}><strong>{label}</strong><small>{avg==null?'':`n=${values.length}`}{item?.stale?' · stale':''}</small></button></td>
+ }
+ return <section className="overview-heatmap"><div className="section-heading"><div><p className="eyebrow">OVERVIEW / SELECT AN ASSAY TO INSPECT</p><h3>Expression across conditions and time</h3></div><p className="heat-legend"><span className="heat-down"/>Lower · <span className="heat-neutral"/>1× · <span className="heat-up"/>Higher</p></div><p className="dashboard-footnote">Color represents log₂ of the displayed mean fold change, centered on 1× (saturated at ±3). Values remain fold changes. Gray means unavailable, not zero. Hatched cells need recalculation. Runs remain separate.</p>
+ {!targets.length||!columns.length?<div className="dashboard-empty">No target assays or biological conditions match these filters. Adjust filters or select assays.</div>:<div className="heatmap-scroll"><table><thead><tr><th>Assay</th>{columns.map(c=><th key={c.key}><span>{seriesLabel(c.series)}</span><small>{c.runName.match(/_(\d+)$/)?.[1]?`Run ${c.runName.match(/_(\d+)$/)![1]}`:c.runName}</small><strong>{c.label}</strong></th>)}</tr></thead><tbody>{targets.map(a=><tr key={a}><th><button className="heat-gene" onClick={()=>onInspect(a)} aria-label={`Inspect ${a}`}>{a} ↗</button></th>{columns.map(c=>cell(a,c))}</tr>)}</tbody></table></div>}</section>
+}

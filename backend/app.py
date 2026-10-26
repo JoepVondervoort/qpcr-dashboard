@@ -3,13 +3,15 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from xml.sax.saxutils import escape
+from zipfile import BadZipFile
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,14 +19,18 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.qpcr_engine import import_qpcr_file, summarize_results
+from backend.qpcr_engine.sample_roles import is_technical_control
+from backend.qpcr_engine.sample_metadata import infer_sample_metadata, analysis_group
+from backend.qpcr_engine.statistics import holm
+from backend.qpcr_engine.review import sample_instance_id, measurement_id, instances, assess_quality, canonical_hash
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-UPLOAD_DIR = BASE_DIR / "uploads"
+DATA_DIR = Path(os.environ.get("QPCR_DATA_DIR", str(BASE_DIR / "data")))
+UPLOAD_DIR = Path(os.environ.get("QPCR_UPLOAD_DIR", str(BASE_DIR / "uploads")))
 DB_PATH = DATA_DIR / "qpcr.db"
 
-DATA_DIR.mkdir(exist_ok=True)
-UPLOAD_DIR.mkdir(exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="qPCR Analysis Workbench", version="0.1.0")
 app.add_middleware(
@@ -106,18 +112,116 @@ def read_legacy_result(value: str | None) -> bool:
 init_db()
 
 
+class SampleAnnotation(BaseModel):
+    condition: str
+    series: str
+    timepoint: float | None = Field(default=None, allow_inf_nan=False)
+    time_unit: Literal["day", "hour"] = "day"
+    replicate: str = ""
+    biological_unit_id: str = ""
+    role: Literal["biological", "technical_control"] | None = None
+
+
+class ExperimentDesign(BaseModel):
+    time_origin: str = ""
+    design_type: Literal["unknown", "independent", "paired", "blocked", "repeated"] = "unknown"
+    experimental_unit: str = ""
+    confirmed: bool = False
+    reference_validation_note: str = ""
+    efficiency_note: str = ""
+
+
+class ReviewDecision(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+class QualityReviewRequest(BaseModel):
+    decisions: dict[str, ReviewDecision] = Field(default_factory=dict)
+    measurement_exclusions: dict[str, str] | None = None
+    spread_threshold: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    note: str = ""
+
+
 class AnalysisRequest(BaseModel):
     target_assay: str
+    sample_metadata: dict[str, SampleAnnotation] = Field(default_factory=dict)
+    instance_metadata: dict[str, SampleAnnotation] = Field(default_factory=dict)
+    excluded_measurements: dict[str, str] | None = None
+    experiment_design: ExperimentDesign | None = None
     reference_assays: list[str] = Field(min_length=1)
     baseline_sample: str = ""
     baseline_samples: list[str] = Field(default_factory=list)
     sample_groups: dict[str, str] = Field(default_factory=dict)
     excluded_samples: list[str] = Field(default_factory=list)
+    technical_control_samples: list[str] | None = None
     exclusion_reasons: dict[str, str] = Field(default_factory=dict)
     hit_threshold: float = Field(default=1.5, gt=0, allow_inf_nan=False)
     statistics_method: str = "descriptive"
     assumptions_confirmed: bool = False
     run_id: str
+
+
+class BatchAnalysisRequest(AnalysisRequest):
+    target_assay: str = ""
+    target_assays: list[str] = Field(min_length=1)
+
+
+def resolved_sample_metadata(records: list[dict[str, Any]], overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+    suggestions = {str(r["sample"]): infer_sample_metadata(str(r["sample"])) for r in records}
+    for name, value in (overrides or {}).items():
+        if name in suggestions:
+            suggestions[name] = value.model_dump() if isinstance(value, SampleAnnotation) else value
+    return suggestions
+
+
+def analysis_context(experiment: dict[str, Any], payload: AnalysisRequest, *, allow_draft: bool = False) -> dict[str, Any]:
+    metadata = experiment["metadata"]
+    design = metadata.get("experiment_design", ExperimentDesign().model_dump())
+    if payload.experiment_design and payload.experiment_design.model_dump() != design:
+        raise HTTPException(status_code=409, detail="Save the experimental design before analysis; the request differs from the experiment's recorded design.")
+    if payload.statistics_method != "descriptive" and not (design["confirmed"] and design["design_type"] == "independent" and design["experimental_unit"].strip() and design["time_origin"].strip()):
+        raise HTTPException(status_code=422, detail="Inferential tests require a confirmed independent-group design, experimental unit and time origin. Paired, blocked and repeated designs currently support descriptive results only.")
+    excluded = payload.excluded_measurements if payload.excluded_measurements is not None else metadata.get("measurement_exclusions", {})
+    if not allow_draft and excluded != metadata.get('measurement_exclusions',{}):
+        raise HTTPException(status_code=409,detail="Save the well exclusions in QC review before creating a saved analysis. Use preview for unsaved changes.")
+    known = {measurement_id(r) for r in experiment["raw_records"]}
+    if set(excluded) - known or any(not reason.strip() for reason in excluded.values()):
+        raise HTTPException(status_code=422, detail="Every well exclusion needs a known measurement identity and a reason.")
+    annotations = {**experiment["sample_instances"], **{k:v.model_dump() for k,v in payload.instance_metadata.items()}}
+    if set(annotations) - set(experiment["sample_instances"]):
+        raise HTTPException(status_code=422, detail="Unknown run/sample instance in the analysis mapping.")
+    annotations = instances(experiment["raw_records"], overrides=annotations)
+    if not allow_draft and annotations != experiment['sample_instances']:
+        raise HTTPException(status_code=409,detail="Save the run-specific sample mapping before analysis; the request contains unsaved assignments.")
+    run_records = [r for r in experiment["raw_records"] if r.get("run_id") == payload.run_id]
+    expected_controls={r['sample'] for r in run_records if annotations[sample_instance_id(r['run_id'],r['sample'])].get('role')=='technical_control'}
+    if payload.technical_control_samples is not None and set(payload.technical_control_samples)!=expected_controls:
+        raise HTTPException(status_code=409,detail='Save technical-control role changes in the run-specific sample mapping before analysis.')
+    if payload.technical_control_samples is None:
+        # Use persisted per-instance roles, including explicit overrides.
+        payload.technical_control_samples = sorted({r["sample"] for r in run_records if annotations[sample_instance_id(r['run_id'],r['sample'])].get('role') == 'technical_control'})
+    for r in run_records:
+        annotations[sample_instance_id(r['run_id'],r['sample'])]['role'] = 'technical_control' if r['sample'] in payload.technical_control_samples else 'biological'
+    if payload.statistics_method != 'descriptive':
+        units = {}
+        for r in run_records:
+            key=sample_instance_id(r['run_id'],r['sample']); unit=annotations[key].get('biological_unit_id','').strip()
+            if unit and r['sample'] not in payload.excluded_samples and r['sample'] not in payload.technical_control_samples:
+                units.setdefault(unit,set()).add(key)
+        if any(len(values)>1 for values in units.values()):
+            raise HTTPException(status_code=422,detail="A biological-unit ID is repeated across sample instances in this run. Independent-group inference cannot treat repeated material as independent samples.")
+    qc = assess_quality(run_records, excluded, metadata.get('qc_decisions',{}), metadata.get('spread_threshold',1.0), {k:v.get('role') for k,v in annotations.items()})
+    config = {'run_id':payload.run_id,'references':sorted(payload.reference_assays),
+      'baseline':sorted(payload.baseline_samples or ([payload.baseline_sample] if payload.baseline_sample else [])),
+      'groups':{k:v for k,v in payload.sample_groups.items() if v and k not in payload.technical_control_samples and k not in payload.excluded_samples},
+      'sample_instances':{k:v for k,v in annotations.items() if any(sample_instance_id(r['run_id'],r['sample'])==k for r in run_records)},
+      'excluded_samples':sorted(payload.excluded_samples),'excluded_measurements':excluded,
+      'technical_controls':sorted(payload.technical_control_samples),'design':design,
+      'statistics_method':payload.statistics_method,'hit_threshold':payload.hit_threshold,'assumptions_confirmed':payload.assumptions_confirmed}
+    return {'context_revision':experiment['context_revision'],'profile_id':canonical_hash(config),
+      'analysis_settings':config,'sample_instances':annotations,'experiment_design':design,
+      'excluded_measurements':excluded,'input_sha256':experiment['input_sha256'],
+      'qc_summary':{k:v for k,v in qc.items() if k!='flags'}}
 
 
 def serialize_json(value: Any) -> str:
@@ -136,7 +240,7 @@ def read_json_column(value: str | None) -> Any:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "analysis_contract": "5", "app": "qPCR Analysis Workbench"}
 
 
 @app.get("/api/projects")
@@ -204,7 +308,11 @@ async def upload_experiment(project_id: str, file: UploadFile = File(...), name:
 
     try:
         parsed = import_qpcr_file(str(destination))
-    except (OSError, ValueError) as error:
+        if not parsed["record_count"]:
+            explanation = " ".join(parsed["warnings"])
+            raise ValueError(f"No raw Ct/Cq measurements were found. {explanation} Upload the original instrument export; this workbook layout may need a separate mapping step.")
+    except (OSError, ValueError, BadZipFile) as error:
+        destination.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail=str(error)) from error
     experiment_id = str(uuid.uuid4())
     now = utc_now()
@@ -280,16 +388,29 @@ def get_experiment(project_id: str, experiment_id: str) -> dict[str, Any]:
         ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="Experiment not found")
+    records = read_json_column(row["raw_records"])
+    metadata = read_json_column(row["metadata"])
+    annotations = instances(records, metadata.get('sample_metadata',{}), metadata.get('sample_instances',{}))
+    quality = assess_quality(records, metadata.get('measurement_exclusions',{}), metadata.get('qc_decisions',{}), metadata.get('spread_threshold',1.0), {k:v.get('role') for k,v in annotations.items()})
     return {
         "id": row["id"],
         "name": row["name"],
         "status": row["status"],
         "original_filename": row["original_filename"],
         "created_at": row["created_at"],
-        "raw_records": read_json_column(row["raw_records"]),
+        "raw_records": [{**r, 'measurement_id':measurement_id(r), 'sample_instance_id':sample_instance_id(r.get('run_id',''),r['sample'])} for r in records],
+        "sample_instances": annotations,
+        "quality": quality,
+        "context_revision": metadata.get('context_revision',0),
+        "input_sha256": hashlib.sha256(row['raw_records'].encode()).hexdigest(),
+        "experiment_design": metadata.get('experiment_design',ExperimentDesign().model_dump()),
+        "measurement_exclusions": metadata.get('measurement_exclusions',{}),
+        "audit_events": metadata.get('audit_events',[]),
+        "sample_roles": {str(r["sample"]): ("technical_control" if is_technical_control(str(r["sample"])) else "biological") for r in read_json_column(row["raw_records"])},
         "parsed_summary": read_json_column(row["parsed_summary"]),
         "analysis_result": read_json_column(row["analysis_result"]),
         "metadata": read_json_column(row["metadata"]),
+        "sample_metadata": resolved_sample_metadata(read_json_column(row["raw_records"]), read_json_column(row["metadata"]).get("sample_metadata", {})),
     }
 
 
@@ -299,15 +420,9 @@ def analyze_experiment(
     experiment_id: str,
     payload: AnalysisRequest,
 ) -> dict[str, Any]:
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT raw_records FROM experiments WHERE project_id = ? AND id = ?",
-            (project_id, experiment_id),
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Experiment not found")
-
-    records = read_json_column(row["raw_records"])
+    experiment = get_experiment(project_id, experiment_id)
+    records = experiment['raw_records']
+    context = analysis_context(experiment, payload)
     if any(not payload.exclusion_reasons.get(sample, "").strip() for sample in payload.excluded_samples):
         raise HTTPException(status_code=422, detail="Every excluded biological sample needs a reason.")
     try:
@@ -320,13 +435,16 @@ def analyze_experiment(
             baseline_samples=payload.baseline_samples,
             sample_groups=payload.sample_groups,
             excluded_samples=payload.excluded_samples,
+            technical_control_samples=payload.technical_control_samples,
+            excluded_measurements=context["excluded_measurements"],
             hit_threshold=payload.hit_threshold,
             statistics_method=payload.statistics_method,
             assumptions_confirmed=payload.assumptions_confirmed,
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    summary["input_sha256"] = hashlib.sha256(row["raw_records"].encode("utf-8")).hexdigest()
+    summary["sample_metadata"] = resolved_sample_metadata(records, payload.sample_metadata)
+    summary.update(context)
     summary["exclusion_reasons"] = payload.exclusion_reasons
     summary["analysis_id"] = str(uuid.uuid4())
     summary["created_at"] = utc_now()
@@ -339,6 +457,189 @@ def analyze_experiment(
             (summary_json, project_id, experiment_id),
         )
     return summary
+
+
+@app.patch("/api/projects/{project_id}/experiments/{experiment_id}/sample-metadata")
+def update_sample_metadata(project_id: str, experiment_id: str, payload: dict[str, SampleAnnotation]) -> dict[str, Any]:
+    experiment = get_experiment(project_id, experiment_id)
+    names = {r["sample"] for r in experiment["raw_records"]}
+    if set(payload) - names:
+        raise HTTPException(status_code=422, detail="Sample annotations include unknown sample names.")
+    metadata = experiment["metadata"]
+    metadata["context_revision"] = metadata.get("context_revision",0)+1
+    metadata["sample_metadata"] = {**metadata.get("sample_metadata", {}), **{k: v.model_dump() for k, v in payload.items()}}
+    with get_db() as conn:
+        conn.execute("UPDATE experiments SET metadata = ? WHERE id = ? AND project_id = ?", (serialize_json(metadata), experiment_id, project_id))
+    return resolved_sample_metadata(experiment["raw_records"], metadata["sample_metadata"])
+
+
+@app.post("/api/projects/{project_id}/experiments/{experiment_id}/analyze-batch")
+def analyze_batch(project_id: str, experiment_id: str, payload: BatchAnalysisRequest) -> dict[str, Any]:
+    experiment = get_experiment(project_id, experiment_id)
+    context = analysis_context(experiment, payload)
+    targets = list(dict.fromkeys(payload.target_assays))
+    if set(targets).intersection(payload.reference_assays):
+        raise HTTPException(status_code=422, detail="Batch targets cannot also be reference assays.")
+    if any(not payload.exclusion_reasons.get(sample, "").strip() for sample in payload.excluded_samples):
+        raise HTTPException(status_code=422, detail="Every excluded biological sample needs a reason.")
+    records = experiment["raw_records"]
+    summaries, failures = [], []
+    for target in targets:
+        try:
+            summary = summarize_results(records, target_assay=target, reference_assays=payload.reference_assays,
+                baseline_sample=payload.baseline_sample, baseline_samples=payload.baseline_samples, run_id=payload.run_id,
+                sample_groups=payload.sample_groups, excluded_samples=payload.excluded_samples,
+                technical_control_samples=payload.technical_control_samples, excluded_measurements=context["excluded_measurements"], hit_threshold=payload.hit_threshold,
+                statistics_method=payload.statistics_method, assumptions_confirmed=payload.assumptions_confirmed)
+            summaries.append(summary)
+        except ValueError as error:
+            failures.append({"target_assay": target, "reason": str(error)})
+    if not summaries:
+        raise HTTPException(status_code=422, detail="No target could be normalized. " + "; ".join(f"{f['target_assay']}: {f['reason']}" for f in failures))
+    # All target-versus-control contrasts in this batch form one declared family.
+    planned_per_failed_target = max((len(r["statistics"]["comparisons"]) for r in summaries), default=0)
+    contrasts = [c for r in summaries for c in r["statistics"]["comparisons"]]
+    pvalues = [c["p_value"] if c["status"] == "tested" else 1.0 for c in contrasts]
+    pvalues += [1.0] * (planned_per_failed_target * len(failures))
+    adjusted = holm(pvalues)
+    for contrast, adjusted_p in zip(contrasts, adjusted):
+        if contrast["status"] == "tested":
+            contrast["adjusted_p_value"] = adjusted_p
+    batch_id = str(uuid.uuid4())
+    annotations = resolved_sample_metadata(records, payload.sample_metadata or experiment["sample_metadata"])
+    with get_db() as conn:
+        for summary in summaries:
+            summary.update(context)
+            summary.update(analysis_id=str(uuid.uuid4()), created_at=utc_now(), batch_id=batch_id,
+                batch_errors=failures, exclusion_reasons=payload.exclusion_reasons,
+                sample_metadata=annotations)
+            statistics = summary["statistics"]
+            statistics["family"] = "All target-assay / condition contrasts in this batch versus the selected baseline samples (one run)"
+            statistics["batch_planned_comparison_count"] = len(pvalues)
+            statistics["adjustment"] = "Holm across all targets in this batch"
+            settings = payload.model_dump()
+            settings["target_assay"] = summary["target_assay"]
+            conn.execute("INSERT INTO analysis_versions VALUES (?, ?, ?, ?, ?)", (summary["analysis_id"], experiment_id,
+                summary["created_at"], serialize_json(settings), serialize_json(summary)))
+        conn.execute("UPDATE experiments SET analysis_result = ?, status = 'analyzed' WHERE id = ? AND project_id = ?",
+                     (serialize_json(summaries[-1]), experiment_id, project_id))
+    return {"batch_id": batch_id, "results": summaries, "errors": failures}
+
+
+def save_experiment_metadata(project_id: str, experiment_id: str, metadata: dict[str, Any]) -> None:
+    with get_db() as conn:
+        conn.execute("UPDATE experiments SET metadata = ? WHERE id = ? AND project_id = ?", (serialize_json(metadata),experiment_id,project_id))
+
+
+@app.patch("/api/projects/{project_id}/experiments/{experiment_id}/sample-instances")
+def update_sample_instances(project_id: str, experiment_id: str, payload: dict[str, SampleAnnotation]) -> dict[str, Any]:
+    experiment=get_experiment(project_id,experiment_id)
+    if set(payload)-set(experiment['sample_instances']):
+        raise HTTPException(status_code=422,detail="Unknown run/sample instance.")
+    for key,value in payload.items():
+        role=value.role or experiment['sample_instances'][key].get('role','biological')
+        if role=='biological' and (not value.condition.strip() or not value.series.strip()):
+            raise HTTPException(status_code=422,detail='Biological sample instances require a condition and series label.')
+    metadata=experiment['metadata']
+    metadata['sample_instances']={**metadata.get('sample_instances',{}),**{k:v.model_dump() for k,v in payload.items()}}
+    metadata['context_revision']=metadata.get('context_revision',0)+1
+    metadata.setdefault('audit_events',[]).append({'at':utc_now(),'action':'sample_instances_updated','instances':list(payload),'before':{k:experiment['sample_instances'][k] for k in payload},'after':{k:v.model_dump() for k,v in payload.items()}})
+    save_experiment_metadata(project_id,experiment_id,metadata)
+    return get_experiment(project_id,experiment_id)
+
+
+@app.patch("/api/projects/{project_id}/experiments/{experiment_id}/design")
+def update_experiment_design(project_id: str, experiment_id: str, payload: ExperimentDesign) -> dict[str, Any]:
+    experiment=get_experiment(project_id,experiment_id)
+    if payload.confirmed and (not payload.time_origin.strip() or not payload.experimental_unit.strip() or payload.design_type=='unknown'):
+        raise HTTPException(status_code=422,detail="Confirm the time origin, experimental unit and design type before marking the design confirmed.")
+    metadata=experiment['metadata'];metadata['experiment_design']=payload.model_dump()
+    metadata['context_revision']=metadata.get('context_revision',0)+1
+    metadata.setdefault('audit_events',[]).append({'at':utc_now(),'action':'design_updated','design':payload.model_dump()})
+    save_experiment_metadata(project_id,experiment_id,metadata)
+    return get_experiment(project_id,experiment_id)
+
+
+@app.patch("/api/projects/{project_id}/experiments/{experiment_id}/quality-review")
+def update_quality_review(project_id: str, experiment_id: str, payload: QualityReviewRequest) -> dict[str, Any]:
+    experiment=get_experiment(project_id,experiment_id);metadata=experiment['metadata']
+    known_flags={f['id'] for f in experiment['quality']['flags']}
+    if set(payload.decisions)-known_flags or any(not d.reason.strip() for d in payload.decisions.values()):
+        raise HTTPException(status_code=422,detail="Each reviewed flag needs its current identity and a nonempty review note.")
+    known_measurements={r['measurement_id'] for r in experiment['raw_records']}
+    if payload.measurement_exclusions is not None:
+        if set(payload.measurement_exclusions)-known_measurements or any(not v.strip() for v in payload.measurement_exclusions.values()):
+            raise HTTPException(status_code=422,detail="Every excluded well needs a valid identity and reason.")
+        if payload.measurement_exclusions != metadata.get('measurement_exclusions',{}):
+            if not payload.note.strip(): raise HTTPException(status_code=422,detail="Describe why well exclusions were changed or restored.")
+            metadata.setdefault('audit_events',[]).append({'at':utc_now(),'action':'well_exclusions_updated','before':metadata.get('measurement_exclusions',{}),'after':payload.measurement_exclusions,'reason':payload.note})
+            metadata['measurement_exclusions']=payload.measurement_exclusions
+            metadata['context_revision']=metadata.get('context_revision',0)+1
+    if payload.spread_threshold is not None: metadata['spread_threshold']=payload.spread_threshold
+    reviews=metadata.setdefault('qc_decisions',{})
+    for key,value in payload.decisions.items():
+        reviews[key]={'reason':value.reason,'at':utc_now()}
+        metadata.setdefault('audit_events',[]).append({'at':utc_now(),'action':'qc_flag_reviewed','flag_id':key,'reason':value.reason})
+    save_experiment_metadata(project_id,experiment_id,metadata)
+    return get_experiment(project_id,experiment_id)
+
+
+class WellPreviewRequest(BaseModel):
+    run_id: str
+    target_assay: str
+    measurement_exclusions: dict[str,str]
+
+
+@app.post("/api/projects/{project_id}/experiments/{experiment_id}/preview-well-exclusions")
+def preview_well_exclusions(project_id:str,experiment_id:str,payload:WellPreviewRequest)->dict[str,Any]:
+    experiment=get_experiment(project_id,experiment_id)
+    with get_db() as conn:
+        versions=conn.execute("SELECT request_json,result_json FROM analysis_versions WHERE experiment_id=? ORDER BY created_at DESC",(experiment_id,)).fetchall()
+    settings=None;current=[]
+    for row in versions:
+        request=read_json_column(row['request_json']);result=read_json_column(row['result_json'])
+        if request.get('run_id')==payload.run_id:
+            if settings is None:settings=request
+            if result.get('target_assay')==payload.target_assay:
+                current=result.get('samples',[]);break
+    if settings is None:raise HTTPException(status_code=422,detail="Configure and save an analysis for this run before previewing well exclusions.")
+    settings.update(target_assay=payload.target_assay,excluded_measurements=payload.measurement_exclusions,
+      instance_metadata=experiment['sample_instances'],experiment_design=experiment['experiment_design'],statistics_method='descriptive',assumptions_confirmed=False,technical_control_samples=None)
+    request=AnalysisRequest(**settings);context=analysis_context(experiment,request,allow_draft=True)
+    try:
+        result=summarize_results(experiment['raw_records'],target_assay=request.target_assay,reference_assays=request.reference_assays,
+          baseline_sample=request.baseline_sample,baseline_samples=request.baseline_samples,run_id=request.run_id,sample_groups=request.sample_groups,
+          excluded_samples=request.excluded_samples,technical_control_samples=request.technical_control_samples,excluded_measurements=context['excluded_measurements'],hit_threshold=request.hit_threshold)
+    except ValueError as error:raise HTTPException(status_code=422,detail=str(error)) from error
+    return {'current':current,'preview':result,'saved':False,'note':'Descriptive normalization preview only; no statistical inference or saved analysis is changed.'}
+
+
+@app.post("/api/projects/{project_id}/experiments/{experiment_id}/rebuild")
+def rebuild_saved_analyses(project_id: str, experiment_id: str) -> dict[str, Any]:
+    experiment=get_experiment(project_id,experiment_id)
+    with get_db() as conn:
+        versions=conn.execute("SELECT request_json FROM analysis_versions WHERE experiment_id=? ORDER BY created_at DESC",(experiment_id,)).fetchall()
+    profiles={}
+    for row in versions:
+        settings=read_json_column(row['request_json'])
+        if settings.get('run_id'):profiles.setdefault(settings['run_id'],settings)
+    results=[];errors=[]
+    for run,settings in profiles.items():
+        run_records=[r for r in experiment['raw_records'] if r['run_id']==run]
+        targets=sorted({r['assay'] for r in run_records}-set(settings['reference_assays']))
+        groups={}
+        for r in run_records:
+            key=r['sample_instance_id'];current=experiment['sample_instances'][key]
+            if current.get('role')=='technical_control':continue
+            previous=settings.get('instance_metadata',{}).get(key)
+            changed=any(previous.get(k)!=current.get(k) for k in ['condition','series','timepoint','time_unit']) if previous else key in experiment['metadata'].get('sample_instances',{})
+            groups[r['sample']]=analysis_group(current) if changed or r['sample'] not in settings.get('sample_groups',{}) else settings['sample_groups'][r['sample']]
+        settings.update(target_assays=targets,sample_groups=groups,instance_metadata=experiment['sample_instances'],sample_metadata={},
+          experiment_design=experiment['experiment_design'],excluded_measurements=experiment['measurement_exclusions'],technical_control_samples=None)
+        try:
+            batch=analyze_batch(project_id,experiment_id,BatchAnalysisRequest(**settings));results.extend(batch['results']);errors.extend([{**e,'run_id':run} for e in batch['errors']])
+        except HTTPException as error:errors.append({'run_id':run,'reason':str(error.detail)})
+    return {'results':results,'errors':errors,'runs_rebuilt':len({r['run_id'] for r in results})}
 
 
 @app.get("/api/projects/{project_id}/experiments/{experiment_id}/analyses")
@@ -430,19 +731,22 @@ def export_svg(project_id: str, experiment_id: str) -> StreamingResponse:
     height = 300
     bar_width = 48
     max_val = max((item.get("fold_change") or 0 for item in samples), default=1)
-    max_val = max(max_val, 1)
+    max_val = max(max_val, 2)
     scale = (height - 2 * padding) / max_val
     baseline_y = height - padding - scale
     bars = []
     for index, item in enumerate(samples):
-        value = item.get("fold_change") or 0
+        value = item.get("fold_change")
+        if value is None:
+            continue
         x = padding + index * 80
-        bar_height = max(value * scale, 0)
-        y = height - padding - bar_height
+        bar_height = abs(value - 1) * scale
+        value_y = height - padding - value * scale
+        y = min(value_y, baseline_y)
         label = escape(str(item.get("sample", "sample")))
         bars.append(f'<rect x="{x}" y="{y}" width="{bar_width}" height="{bar_height}" fill="#3b82f6" rx="4" />')
         bars.append(f'<text x="{x + bar_width / 2}" y="{height - padding + 18}" font-size="10" text-anchor="middle">{label[:10]}</text>')
-        bars.append(f'<text x="{x + bar_width / 2}" y="{y - 8}" font-size="10" text-anchor="middle">{value:.2f}</text>')
+        bars.append(f'<text x="{x + bar_width / 2}" y="{value_y - 8}" font-size="10" text-anchor="middle">{value:.2f}</text>')
 
     markup = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
         <rect width="100%" height="100%" fill="white"/>

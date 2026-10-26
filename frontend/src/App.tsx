@@ -462,7 +462,7 @@ function App() {
 
       <main className="main-panel" inert={uploadOpen}>
         {libraryOpen&&backendIssue&&<p className="analysis-error" role="alert">{backendIssue}</p>}
-        {libraryOpen&&<ExperimentLibrary projects={projects} loading={libraryLoading} error={libraryError} onRetry={()=>{void loadProjects();void checkBackend()}} onUpload={()=>setUploadOpen(true)} onOpen={(project,experiment)=>{if(experiment!==activeExperimentId)setVersions([]);setSelectedProjectId(project);setSelectedExperimentId(experiment);setHistoricalResult(null);setLibraryOpen(false);setActiveTab('dashboard')}}/>}
+        {libraryOpen&&<ExperimentLibrary projects={projects} loading={libraryLoading} error={libraryError} onRetry={()=>{void loadProjects();void checkBackend()}} onUpload={()=>setUploadOpen(true)} onOpen={(project,experiment)=>{setStatus('');if(experiment!==activeExperimentId)setVersions([]);setSelectedProjectId(project);setSelectedExperimentId(experiment);setHistoricalResult(null);setLibraryOpen(false);setActiveTab('dashboard')}}/>}
         <div className="experiment-workspace" hidden={libraryOpen}>
         <button className="back-library" onClick={()=>{setLibraryOpen(true);void loadProjects()}}>← All experiments</button>
         <header className="topbar">
@@ -475,7 +475,7 @@ function App() {
           </div>
 
         </header>
-        <div className="status-bar" role="status" aria-live="polite">{status}</div>
+        {status&&<div className="status-bar" role="status" aria-live="polite"><span>{status}</span><button className="icon-button" aria-label="Dismiss update" onClick={()=>setStatus('')}>×</button></div>}
         {backendIssue && <p className="analysis-error" role="alert">{backendIssue}</p>}
 
         {!selectedExperiment && activeTab === 'setup' && <section className="panel welcome-panel">

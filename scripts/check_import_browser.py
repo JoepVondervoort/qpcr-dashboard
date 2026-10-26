@@ -152,7 +152,9 @@ def main() -> None:
                     expect(page.locator('.coverage-badges')).to_contain_text('Run 3: unavailable')
                     expect(page.locator('.figure-coverage-note')).to_contain_text('Run 3 unavailable')
                     page.get_by_role('button',name='Inspect PAX6',exact=True).click()
+                    page.get_by_label('Export PAX6 expression',exact=True).click()
                     expect(page.get_by_role('button',name='Download PAX6 expression SVG',exact=True)).to_be_disabled()
+                    page.get_by_label('Export PAX6 expression',exact=True).click()
                 page.get_by_role('button',name=f'Inspect {target}',exact=True).click()
                 # Incompatible filters cannot be selected, and QC ignores biological time filters.
                 page.get_by_label('Dashboard run filter',exact=True).select_option(parsed['runs'][1]['id'])
@@ -251,10 +253,15 @@ def main() -> None:
                 assert float(baseline_label.get_attribute('y'))>float(chart.locator('[data-baseline="1"]').get_attribute('y1'))
                 # Export physical size, readable fonts, actual plotted data and methods.
                 page.locator('.figure-options summary').click()
-                page.get_by_label('Time-axis spacing',exact=True).select_option('proportional')
+                page.get_by_role('button',name=f'Settings for {target} expression',exact=True).click()
+                page.get_by_label('Plot time spacing',exact=True).select_option('proportional')
+                page.get_by_role('button',name='Save this plot',exact=True).click()
                 expect(chart).to_have_attribute('data-time-spacing','proportional')
-                page.get_by_label('Time-axis spacing',exact=True).select_option('auto')
+                page.get_by_role('button',name=f'Settings for {target} expression',exact=True).click()
+                page.get_by_label('Plot time spacing',exact=True).select_option('auto')
+                page.get_by_role('button',name='Save this plot',exact=True).click()
                 page.get_by_label('Publication width',exact=True).select_option('single')
+                page.get_by_label(f'Export {target} expression',exact=True).click()
                 with page.expect_download() as download:page.get_by_role('button',name=f'Download {target} expression SVG',exact=True).click()
                 import xml.etree.ElementTree as ET
                 svg=ET.parse(download.value.path()).getroot();assert svg.attrib['width']=='85mm'
@@ -383,17 +390,18 @@ def main() -> None:
                         name=f'Fixture confluency_100% day {day}.{replicate+1}'
                         groups[name]='baseline' if day==0 else 'treatment'
                         if day==0:base_samples.append(name)
-                        for assay in ['T','R']:
+                        for assay in ['T','T2','R']:
                             for technical in range(2):
-                                value=(24 if day==0 else 20)+replicate*.1 if assay=='T' else 20+replicate*.01
+                                value=(24 if day==0 else 20)+replicate*.1 if assay!='R' else 20+replicate*.01
+                                if assay=='T2':value+=2
                                 writer.writerow([f'{chr(65+well_index//12)}{well_index%12+1}',name,assay,value+technical*.02]);well_index+=1
                 uploaded=page.request.post(api+f"/api/projects/{project2['id']}/upload",multipart={'name':'Normality fixture','file':{'name':'normality.csv','mimeType':'text/csv','buffer':buffer.getvalue().encode()}}).json()
                 normality_path=api+f"/api/projects/{project2['id']}/experiments/{uploaded['id']}"
                 design={'time_origin':'treatment','experimental_unit':'independent culture','design_type':'independent','confirmed':True}
                 assert page.request.patch(normality_path+'/design',data=design).ok
-                calculated=page.request.post(normality_path+'/analyze',data={'target_assay':'T','reference_assays':['R'],'baseline_samples':base_samples,'sample_groups':groups,'run_id':uploaded['runs'][0]['id'],'statistics_method':'welch','assumptions_confirmed':True})
+                calculated=page.request.post(normality_path+'/analyze-batch',data={'target_assays':['T2','T'],'target_assay':'T','reference_assays':['R'],'baseline_samples':base_samples,'sample_groups':groups,'run_id':uploaded['runs'][0]['id'],'statistics_method':'welch','assumptions_confirmed':True})
                 assert calculated.ok,calculated.text()
-                significant_result=calculated.json()
+                significant_result=calculated.json()['results'][-1]
                 adjusted=significant_result['statistics']['comparisons'][0]['adjusted_p_value'];assert adjusted<.05
                 page.get_by_role('button',name='Experiments',exact=True).click()
                 page.get_by_label('Search experiments',exact=True).fill('Normality fixture')
@@ -414,10 +422,102 @@ def main() -> None:
                 diagnostic_svg=ET.parse(download.value.path()).getroot();assert diagnostic_svg.attrib['width']=='85mm'
                 page.locator('.distribution-diagnostics').screenshot(path='/tmp/qpcr-distribution-diagnostics.png')
                 page.get_by_role('button',name='Expression',exact=True).click()
+                page.get_by_label('Export T expression',exact=True).click()
                 with page.expect_download() as download:page.get_by_role('button',name='Download T expression SVG',exact=True).click()
                 significant_svg=ET.parse(download.value.path()).getroot()
                 assert any('data-significance-p' in element.attrib for element in significant_svg.iter())
                 page.locator('.assay-inspector .figure-card').screenshot(path='/tmp/qpcr-significance-result.png')
+                # Plot settings preview and save manual bounds, colors and explicit dashboard defaults.
+                page.get_by_label('Export T expression',exact=True).click()
+                page.get_by_role('button',name='Bars from 1×',exact=True).click()
+                before_settings=page.request.get(normality_path).json();before_versions=len(page.request.get(normality_path+'/analyses').json())
+                page.get_by_role('button',name='Settings for T expression',exact=True).click()
+                settings=page.get_by_role('dialog',name='Figure settings: T',exact=True)
+                settings.get_by_label('Y maximum',exact=True).fill('5')
+                settings.get_by_label('Y minimum',exact=True).fill('10')
+                expect(settings.get_by_role('button',name='Save this plot',exact=True)).to_be_disabled()
+                settings.get_by_label('Y minimum',exact=True).fill('0')
+                settings.get_by_label('Y tick spacing',exact=True).fill('1')
+                settings.get_by_label('X minimum',exact=True).fill('0')
+                settings.get_by_label('X maximum',exact=True).fill('10')
+                settings.get_by_label('X tick spacing',exact=True).fill('5')
+                settings.get_by_label('Y-axis title',exact=True).fill('Normalized expression')
+                settings.get_by_label('X-axis title',exact=True).fill('Days after treatment')
+                expect(page.locator('.figure-clipping-note')).to_contain_text('Display limits')
+                settings.get_by_role('button',name='Save this plot',exact=True).click()
+                expect(evidence_chart).to_have_attribute('data-y-max','5')
+                expect(evidence_chart).to_have_attribute('data-x-max','10')
+                page.get_by_label('Export T expression',exact=True).click()
+                with page.expect_download() as download:page.get_by_role('button',name='Download T expression SVG',exact=True).click()
+                cropped_svg=ET.parse(download.value.path()).getroot()
+                metadata=next(node for node in cropped_svg if node.tag.endswith('metadata'))
+                display=json.loads(metadata.text)
+                assert display['limits']['y']==[0,5] and display['clipping_note']
+                assert any('Display limits' in (node.text or '') for node in cropped_svg.iter())
+                assert 'translateY' not in cropped_svg.attrib.get('style','')
+                page.get_by_label('Export T expression',exact=True).click()
+                page.get_by_role('button',name='Settings for T expression',exact=True).click()
+                settings.get_by_role('button',name='Reset to automatic',exact=True).click()
+                settings.get_by_role('checkbox',name='Use shared expression scale',exact=True).check()
+                settings.get_by_role('button',name='Apply axes to all expression plots',exact=True).click()
+                page.get_by_role('button',name='All genes',exact=True).click()
+                shared=page.locator('.gene-panel-grid svg[role=img]')
+                expect(shared).to_have_count(2)
+                limits=shared.evaluate_all("nodes=>nodes.map(node=>[node.dataset.yMin,node.dataset.yMax])")
+                assert limits[0]==limits[1]
+                page.get_by_role('button',name='Settings for T expression',exact=True).click()
+                settings.get_by_role('button',name='Style & colors',exact=True).click()
+                settings.get_by_label('Color assignment',exact=True).select_option('sample')
+                settings.locator('.color-editor-row input[type=color]').nth(1).fill('#993399')
+                settings.get_by_role('checkbox',name='Filled biological points',exact=True).check()
+                settings.get_by_label('Point size',exact=True).focus();page.keyboard.press('ArrowRight')
+                settings.locator('.individual-colors summary').filter(has_text='Individual mean-bar colors').click()
+                settings.locator('.individual-colors input[type=color]').first.fill('#e39f29')
+                settings.get_by_role('button',name='Apply style to entire dashboard',exact=True).click()
+                expect(shared.first).to_have_attribute('data-color-by','sample')
+                assert page.locator('.gene-panel-grid svg [fill="#e39f29"]').count()>0
+                assert page.locator('.gene-panel-grid svg circle[stroke="#993399"]').count()>0
+                page.get_by_role('button',name='Raw Ct',exact=True).click()
+                assert page.locator('.gene-panel-grid svg circle[stroke="#993399"]').count()>0
+                prefs=page.evaluate("key=>JSON.parse(localStorage.getItem(key))",f"qpcr-presentation-v1:{uploaded['id']}")
+                assert prefs['plotDefaults']['expression']['axes']['sharedY'] is True
+                assert prefs['plotDefaults']['ct']['axes']['sharedY'] is False
+                assert prefs['plotDefaults']['ct']['style']['colorBy']=='sample'
+                assert page.request.get(normality_path).json()['context_revision']==before_settings['context_revision']
+                assert len(page.request.get(normality_path+'/analyses').json())==before_versions
+                page.get_by_role('button',name='Expression',exact=True).click()
+                page.screenshot(path='/tmp/qpcr-editor-dashboard.png',full_page=True)
+                page.get_by_role('button',name='Settings for T expression',exact=True).click()
+                settings.get_by_label('Y maximum',exact=True).fill('40')
+                settings.get_by_role('button',name='Save this plot',exact=True).click()
+                expect(page.locator('.gene-panel[data-assay="T"] svg[role=img]')).to_have_attribute('data-y-max','40')
+                page.get_by_role('button',name='Undo last appearance change',exact=True).click()
+                assert shared.evaluate_all("nodes=>new Set(nodes.map(node=>node.dataset.yMax)).size")==1
+                page.get_by_role('button',name='Settings for T expression',exact=True).click()
+                settings.get_by_label('Y maximum',exact=True).fill('40')
+                settings.get_by_role('button',name='Save this plot',exact=True).click()
+                page.get_by_role('button',name='Settings for T expression',exact=True).click()
+                settings.get_by_role('button',name='Use dashboard settings',exact=True).click()
+                assert shared.evaluate_all("nodes=>new Set(nodes.map(node=>node.dataset.yMax)).size")==1
+                page.get_by_role('button',name='Settings for T expression',exact=True).click()
+                settings.get_by_label('Y maximum',exact=True).fill('100')
+                settings.get_by_role('button',name='Cancel preview',exact=True).click()
+                assert shared.evaluate_all("nodes=>new Set(nodes.map(node=>node.dataset.yMax)).size")==1
+                page.set_viewport_size({'width':390,'height':844})
+                page.get_by_role('button',name='Settings for T expression',exact=True).click()
+                assert settings.bounding_box()['width']<=390
+                assert page.evaluate('document.body.scrollWidth')<=391
+                page.keyboard.press('Escape')
+                expect(settings).not_to_be_visible()
+                assert page.locator('.app-shell').evaluate('node=>node.inert') is False
+                page.set_viewport_size({'width':1440,'height':1000})
+                page.get_by_role('button',name='Overview',exact=True).click()
+                expect(evidence_chart.locator('[data-significance-p]')).to_have_count(1)
+                page.get_by_label('Experimental time filter',exact=True).select_option('day:21')
+                page.get_by_role('button',name='Settings for T expression',exact=True).click()
+                expect(settings.get_by_label('X minimum',exact=True)).to_be_enabled()
+                page.keyboard.press('Escape')
+                page.get_by_label('Experimental time filter',exact=True).select_option('all')
                 # A changed design marks the old test historical and removes its plot star.
                 page.get_by_role('button',name='Samples & design',exact=True).click()
                 design_panel=page.locator('.samples-workspace .design-panel')
@@ -430,7 +530,7 @@ def main() -> None:
                 expect(page.locator('.figure-comparisons summary')).to_contain_text('Historical statistics')
                 assert not errors, errors
                 browser.close()
-                print('PASS: remembered colors; native drag and keyboard order; pins/search/undo; biological normal probability plots; Holm stars and stale suppression; compact/proportional axes; baseline label outside plot; all-gene grid and biological filters; 600 dpi PNG/SVG/PDF; experiment library, search/status/sort, duplicate upload notice, raw cell context, bulk sample editing, mobile cards; review-first overview; QC survives filters; exclusion preview and audit; missing-run coverage; per-run identities; stale/rebuild; explicit design; 1x figures; physical SVG/data/methods/PDF exports; responsive workspace; no browser errors.')
+                print('PASS: per-plot axes/style; shared scales by quantity; independent sample/bar colors; live preview/cancel; clipping in exports; responsive editors; remembered colors; native drag and keyboard order; pins/search/undo; biological normal probability plots; Holm stars and stale suppression; compact/proportional axes; baseline label outside plot; all-gene grid and biological filters; 600 dpi PNG/SVG/PDF; experiment library, search/status/sort, duplicate upload notice, raw cell context, bulk sample editing, mobile cards; review-first overview; QC survives filters; exclusion preview and audit; missing-run coverage; per-run identities; stale/rebuild; explicit design; 1x figures; physical SVG/data/methods/PDF exports; responsive workspace; no browser errors.')
         finally:
             for process in processes:
                 process.terminate()

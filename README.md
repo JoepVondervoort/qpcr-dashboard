@@ -350,3 +350,42 @@ filtered subsets, multi-location comparisons and historical results have explici
 scope/status messages and no current significance marker. Filters never rerun a
 test or change its comparison family. Statistical annotations can be hidden from
 plots without hiding the underlying saved results.
+
+## Figure axes, mark styling and dashboard defaults
+
+Each figure now has a **Settings** button and an **Export** menu. The workspace
+uses compact figure headers and review summaries; repeated figure notes and
+sample color keys expand on demand. Publication SVG/PNG/PDF output retains the
+full labels, legends, scientific notes and status annotations.
+
+In **Settings → Axes**, set automatic/manual X and Y limits, tick intervals,
+axis titles and time spacing. Inputs preview immediately. **Save this plot**
+records only the sections that differ from the dashboard defaults.
+**Apply axes to all expression plots** (or **all Ct plots**) updates that quantity's
+defaults and clears individual axis overrides for it; individual styles remain.
+**Use dashboard settings** removes a plot's overrides. **Reset to automatic**
+clears manual axes. **Cancel preview** or Escape discards the preview. **Undo last appearance change**
+restores the preceding saved appearance without changing analysis history.
+
+**Dashboard appearance & shared scales** offers separate shared/individual Y
+scales for expression and Ct. Shared ranges account for selected assays,
+biological observations and their SD; Ct ranges also retain technical controls.
+Pin/search display choices do not change those ranges. Numeric X limits use
+proportional time, and their time unit is saved. A plot with incompatible time
+units uses an automatic X axis and discloses the fallback. Invalid limits or
+excessively dense tick intervals cannot be saved.
+
+**Settings → Style & colors** assigns colors by condition/run, condition,
+confluency, cell line, run or biological sample. Bar fills, points and bar
+outlines have independent color controls. Advanced sections override individual
+mean bars and individual sample points. Mean bars keep their group meaning;
+sample colors never turn technical wells into biological replicates. Point size,
+filled/hollow points, bar opacity, line/outline width and grid visibility are
+editable. **Apply style to entire dashboard** updates both quantities' defaults
+and clears individual style overrides, while preserving axes.
+
+Manual cropping discloses measurements, uncertainty intervals and a baseline
+outside the visible axes. Clipping does not exclude or recalculate observations.
+Exports include actual limits, styling, color keys and clipping notes; plotted
+data CSV adds `visible_under_axis_limits`. Appearance settings remain local to
+this experiment in this browser and do not create scientific analysis versions.

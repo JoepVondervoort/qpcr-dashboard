@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -77,13 +78,13 @@ def main() -> None:
         target = 'ACTA1' if any(r['assay'] == 'ACTA1' for r in parsed['records']) else 'TARGET'
         backend_port, frontend_port = unused_port(), unused_port()
         client = data/'client'
-        env = {**os.environ, 'VITE_API_ROOT': f'http://127.0.0.1:{backend_port}'}
+        env = {**os.environ, 'VITE_API_ROOT': '', 'QPCR_BACKEND_URL': f'http://127.0.0.1:{backend_port}'}
         subprocess.run(['npm', 'run', 'build', '--', '--outDir', str(client)], cwd=ROOT/'frontend', env=env, check=True)
         processes = []
         try:
             backend = subprocess.Popen([sys.executable, '-m', 'uvicorn', 'backend.app:app', '--host', '127.0.0.1', '--port', str(backend_port), '--log-level', 'warning'], cwd=ROOT, env={**os.environ, 'QPCR_DATA_DIR': str(data/'store'), 'QPCR_UPLOAD_DIR': str(data/'uploads')})
             processes.append(backend)
-            frontend = subprocess.Popen([sys.executable, '-m', 'http.server', str(frontend_port), '--bind', '127.0.0.1', '--directory', str(client)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            frontend = subprocess.Popen(['npm', 'run', 'preview', '--', '--host', '127.0.0.1', '--port', str(frontend_port), '--outDir', str(client)], cwd=ROOT/'frontend', env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             processes.append(frontend)
             wait_for_server(f'http://127.0.0.1:{backend_port}/api/health', backend)
             wait_for_server(f'http://127.0.0.1:{frontend_port}', frontend)
@@ -96,14 +97,15 @@ def main() -> None:
                 errors = []
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 page.goto(f'http://127.0.0.1:{frontend_port}')
-                expect(page.get_by_text('No projects yet.', exact=True)).to_be_visible()
+                expect(page.get_by_text('Your qPCR overview starts here', exact=True)).to_be_visible()
                 # An old running API must be identified before calculation, not rendered as [object Object].
                 page.route('**/openapi.json', lambda route: route.fulfill(json={'components': {'schemas': {'AnalysisRequest': {'properties': {'baseline_sample': {'type': 'string'}}}}}}))
                 page.reload()
                 expect(page.get_by_role('alert').filter(has_text='backend is outdated')).to_be_visible()
                 page.unroute('**/openapi.json')
                 page.reload()
-                expect(page.get_by_text('No projects yet.', exact=True)).to_be_visible()
+                expect(page.get_by_text('Your qPCR overview starts here', exact=True)).to_be_visible()
+                page.get_by_role('button', name='Upload your first results', exact=True).click()
                 page.get_by_label('File', exact=True).set_input_files(workbook)
                 page.get_by_role('button', name='Create project and import', exact=True).click()
                 expect(page.locator('.status-bar')).to_contain_text(f"Imported {parsed['record_count']} measurements",timeout=20000)
@@ -112,21 +114,36 @@ def main() -> None:
                 experiment_id=project['experiments'][0]['id']
                 path=api+f"/api/projects/{project['id']}/experiments/{experiment_id}"
                 detail=lambda:page.request.get(path).json()
-                page.get_by_role('button',name='2 · Dashboard',exact=True).click()
+                # Uploaded data opens directly to a raw overview, without analysis setup.
+                expect(page.locator('.overview-heatmap')).to_contain_text('Raw Ct across conditions and time')
+                page.get_by_role('button',name='All experiments',exact=False).click()
+                expect(page.locator('.library-table tbody tr')).to_have_count(1)
+                expect(page.locator('.library-table')).to_contain_text('Not calculated')
+                page.get_by_label('Search experiments',exact=True).fill('no-such-experiment')
+                expect(page.get_by_text('No experiments match these filters.',exact=True)).to_be_visible()
+                page.get_by_role('button',name='Clear filters',exact=True).click()
+                page.locator('.experiment-open').first.click()
                 expect(page.locator('.overview-heatmap')).to_be_visible()
-                expect(page.locator('.review-banner')).to_contain_text('Quality review required')
+                # A cell keeps its run, series and time when opening the inspector.
+                cell=page.locator('.heat-cell').first
+                cell.click()
+                expect(page.locator('.inspector-context')).to_contain_text('Selected cell:')
+                expect(page.get_by_label('Dashboard run filter',exact=True)).not_to_have_value('all')
+                page.get_by_role('button',name='Show all conditions',exact=True).click()
+                expect(page.locator('.review-banner')).to_contain_text('QC concern(s) to review')
                 assert page.locator('.figure-card').count()<=1, 'Default view must be focused, not a wall of plots.'
+                page.get_by_label('Inspect assay',exact=True).select_option(target)
                 page.get_by_role('button',name='Target Ct',exact=True).click()
                 expect(page.get_by_role('img',name=f'{target} · raw Ct values',exact=True)).to_be_visible()
                 # Save all target assays for each run, preserving run boundaries.
                 for run in parsed['runs']:
-                    page.get_by_role('button',name='1 · Import & setup',exact=True).click()
+                    page.get_by_role('button',name='Expression setup',exact=True).click()
                     page.get_by_role('button',name=run['name'],exact=False).click()
-                    create=page.get_by_role('button',name='Create dashboard and save analysis',exact=True).first
+                    create=page.get_by_role('button',name='Calculate expression',exact=True).first
                     expect(create).to_be_enabled()
                     create.click()
-                    expect(page.get_by_role('button',name='2 · Dashboard',exact=True)).to_have_attribute('aria-pressed','true',timeout=20000)
-                    expect(page.locator('.status-bar')).to_contain_text('Dashboard created')
+                    expect(page.get_by_role('button',name='Overview',exact=True)).to_have_attribute('aria-pressed','true',timeout=20000)
+                    expect(page.locator('.status-bar')).to_contain_text('Expression saved')
                 page.get_by_label('Inspect assay',exact=True).select_option(target)
                 expect(page.locator('.assay-inspector')).to_be_visible()
                 # A missing run must be visible even while a valid run is plotted.
@@ -167,38 +184,56 @@ def main() -> None:
                 # Acknowledge a control concern without erasing the original signal.
                 concern=next(f for f in changed['quality']['flags'] if f['kind']=='control_signal')
                 page.locator('.quality-list button').filter(has_text=f"{concern['assay']} · {concern['sample']}").filter(has_text=next(r['name'] for r in parsed['runs'] if r['id']==concern['run_id'])).click()
+                page.get_by_label('Review status',exact=True).select_option('all')
                 page.get_by_label('Review finding (required to acknowledge this concern)',exact=True).fill('Control trace and assignment inspected; follow-up documented')
                 page.get_by_role('button',name='Record review note',exact=True).click()
                 expect(page.locator('.review-note')).to_contain_text('Control trace and assignment inspected',timeout=10000)
                 assert next(f for f in detail()['quality']['flags'] if f['id']==concern['id'])['status']=='reviewed'
                 # Explicit design metadata controls the available inference model.
-                page.get_by_role('button',name='1 · Import & setup',exact=True).click()
-                design=page.locator('.analysis-panel .design-panel')
+                page.get_by_role('button',name='Samples & design',exact=True).click()
+                design=page.locator('.samples-workspace .design-panel')
                 design.get_by_label('Time measured from',exact=True).fill('transfection')
                 design.get_by_label('Experimental unit',exact=True).fill('independently transfected culture well')
                 design.get_by_label('Study design',exact=False).select_option('paired')
                 design.get_by_role('checkbox').check()
                 design.get_by_role('button',name='Save experimental design',exact=True).click()
                 expect(design).to_contain_text('Design saved.',timeout=10000)
+                page.get_by_role('button',name='Expression setup',exact=True).click()
                 expect(page.get_by_label('Statistical approach',exact=False).locator('option[value="welch"]')).to_have_attribute('disabled','')
+                page.get_by_role('button',name='Samples & design',exact=True).click()
                 design.get_by_label('Study design',exact=False).select_option('independent')
                 design.get_by_role('checkbox').check()
                 design.get_by_role('button',name='Save experimental design',exact=True).click()
+                page.get_by_role('button',name='Expression setup',exact=True).click()
                 expect(page.get_by_label('Statistical approach',exact=False).locator('option[value="welch"]')).not_to_have_attribute('disabled','',timeout=10000)
                 # A sample instance can be reassigned without changing another run's material.
-                page.get_by_role('button',name='2 · Dashboard',exact=True).click()
+                page.get_by_role('button',name='Overview',exact=True).click()
                 page.get_by_label('Experimental time filter',exact=True).select_option('all')
-                page.locator('.sample-mapping summary').click()
+                page.get_by_role('button',name='Samples & design',exact=True).click()
                 mapped=detail();row=next(r for r in mapped['raw_records'] if r['run_id']==parsed['runs'][0]['id'] and mapped['sample_instances'][r['sample_instance_id']]['timepoint']==21)
                 other=next(r for r in mapped['raw_records'] if r['run_id']==parsed['runs'][1]['id'] and mapped['sample_instances'][r['sample_instance_id']]['timepoint']==21)
-                page.get_by_label(f"Time for instance {row['sample_instance_id']}",exact=True).fill('22')
+                page.get_by_label('Sample mapping run',exact=True).select_option(row['run_id'])
+                page.get_by_label('Find sample',exact=True).fill(row['sample'])
+                page.get_by_role('button',name='Select visible (1)',exact=True).click()
+                page.get_by_label('Bulk field',exact=True).select_option('timepoint')
+                page.get_by_label('Bulk value',exact=True).fill('22')
+                page.get_by_role('button',name='Apply to selected',exact=True).click()
+                expect(page.get_by_label(f"Time for instance {row['sample_instance_id']}",exact=True)).to_have_value('22')
+                page.get_by_label('Bulk field',exact=True).select_option('cell_line')
+                page.get_by_label('Bulk value',exact=True).fill('Test cells')
+                page.get_by_role('button',name='Apply to selected',exact=True).click()
+                page.get_by_label('Bulk field',exact=True).select_option('confluency')
+                page.get_by_label('Bulk value',exact=True).fill('125%')
+                page.get_by_role('button',name='Apply to selected',exact=True).click()
                 page.get_by_role('button',name='Save sample mapping',exact=True).click()
                 expect(page.locator('.sample-mapping')).to_contain_text('Mapping saved.',timeout=10000)
                 after=detail()
+                assert after['sample_instances'][row['sample_instance_id']]['cell_line']=='Test cells'
+                assert after['sample_instances'][row['sample_instance_id']]['confluency']=='125%'
                 assert after['sample_instances'][row['sample_instance_id']]['timepoint']==22
                 assert after['sample_instances'][other['sample_instance_id']]['timepoint']==21
-                page.locator('.sample-mapping summary').click()
-                page.get_by_role('button',name='Rebuild saved runs',exact=True).click()
+                page.get_by_role('button',name='Overview',exact=True).click()
+                page.get_by_role('button',name='Recalculate saved runs',exact=True).click()
                 expect(page.locator('.rebuild-status')).to_contain_text('Rebuilt 2 run(s)',timeout=25000)
                 page.get_by_role('button',name=f'Inspect {target}',exact=True).click()
                 expect(page.locator('.coverage-badges')).not_to_contain_text('stale')
@@ -207,8 +242,18 @@ def main() -> None:
                 for bar in chart.locator('rect[data-mean]').all():
                     avg=float(bar.get_attribute('data-mean'));anchor=float(bar.get_attribute('data-baseline-y'));top=float(bar.get_attribute('y'));height=float(bar.get_attribute('height'))
                     assert abs((top if avg<1 else top+height)-anchor)<1e-6
+                # Sparse/bars axes compact automatically, with an explicit proportional override.
+                expect(chart).to_have_attribute('data-time-spacing','measured')
+                positions=[float(t.locator('line').get_attribute('x1')) for t in chart.locator('[data-axis-tick="x"]').all()]
+                gaps=[b-a for a,b in zip(positions,positions[1:])]
+                assert not gaps or max(gaps)-min(gaps)<1e-6
+                baseline_label=chart.locator('[data-baseline-label="true"]')
+                assert float(baseline_label.get_attribute('y'))>float(chart.locator('[data-baseline="1"]').get_attribute('y1'))
                 # Export physical size, readable fonts, actual plotted data and methods.
                 page.locator('.figure-options summary').click()
+                page.get_by_label('Time-axis spacing',exact=True).select_option('proportional')
+                expect(chart).to_have_attribute('data-time-spacing','proportional')
+                page.get_by_label('Time-axis spacing',exact=True).select_option('auto')
                 page.get_by_label('Publication width',exact=True).select_option('single')
                 with page.expect_download() as download:page.get_by_role('button',name=f'Download {target} expression SVG',exact=True).click()
                 import xml.etree.ElementTree as ET
@@ -219,6 +264,75 @@ def main() -> None:
                 csv=Path(download.value.path()).read_text();assert 'fold_change' in csv and 'analysis_id' in csv
                 with page.expect_download() as download:page.get_by_role('button',name=f'Download {target} expression methods',exact=True).click()
                 methods=json.loads(Path(download.value.path()).read_text());assert len(methods['methods']['analyses'])==2
+                assert methods['figure']['time_spacing']=='measured'
+                with page.expect_download() as download:page.get_by_role('button',name=f'Download {target} expression PNG 600 dpi',exact=True).click()
+                import struct
+                download.value.save_as('/tmp/qpcr-publication-600dpi.png')
+                png=Path(download.value.path()).read_bytes()
+                assert struct.unpack('>I',png[16:20])[0]==round(85/25.4*600)
+                density=png.index(b'pHYs')
+                assert struct.unpack('>II',png[density+4:density+12])==(23622,23622)
+                # Separate all-gene view preserves the inspector and respects biological filters.
+                page.get_by_role('button',name='All genes',exact=True).click()
+                expect(page.locator('.gene-panel-grid .figure-card').first).to_be_visible()
+                expected_targets=len({r['assay'] for r in after['raw_records']}-set(detail()['analysis_result']['reference_assays']))
+                expect(page.locator('.gene-panel-grid .figure-card')).to_have_count(expected_targets)
+                line_filters=page.get_by_role('group',name='Cell line filter buttons',exact=True)
+                line_filters.get_by_role('button',name='Test cells',exact=True).click()
+                confluency_filters=page.get_by_role('group',name='Confluency filter buttons',exact=True)
+                confluency_filters.get_by_role('button',name='125%',exact=True).click()
+                expect(page.locator('.overview-summary')).to_contain_text('1 biological samples')
+                page.get_by_role('button',name='Raw Ct',exact=True).click()
+                expect(page.locator('.gene-panel-grid .figure-card')).to_have_count(len({r['assay'] for r in after['raw_records']}))
+                line_filters.get_by_role('button',name='All',exact=True).click()
+                confluency_filters.get_by_role('button',name='All',exact=True).click()
+                # Appearance, drag order, keyboard alternatives, pins and search persist without recalculation.
+                before_appearance=detail();version_count=len(page.request.get(path+'/analyses').json())
+                initial_order=page.locator('.gene-panel-grid > .gene-panel').evaluate_all("nodes=>nodes.map(node=>node.dataset.assay)")
+                first,second=initial_order[:2]
+                source=page.locator('.gene-panel').filter(has=page.get_by_role('group',name=f'{first} plot controls',exact=True))
+                destination=page.locator('.gene-panel').filter(has=page.get_by_role('group',name=f'{second} plot controls',exact=True))
+                source.locator('.plot-drag-handle').drag_to(destination.locator('.gene-panel-toolbar'))
+                expected_order=[second,first,*initial_order[2:]]
+                expect(page.locator('.gene-panel-grid > .gene-panel').first).to_have_attribute('data-assay',second)
+                page.get_by_role('button',name=f'Move {first} earlier',exact=True).click()
+                expect(page.locator('.gene-panel-grid > .gene-panel').first).to_have_attribute('data-assay',first)
+                page.get_by_role('button',name='Undo reorder',exact=True).click()
+                source.locator('.plot-drag-handle').press('ArrowLeft')
+                expect(page.locator('.gene-panel-grid > .gene-panel').first).to_have_attribute('data-assay',first)
+                source.locator('.plot-drag-handle').press('ArrowRight')
+                expect(page.locator('.gene-panel-grid > .gene-panel').first).to_have_attribute('data-assay',second)
+                page.get_by_role('button',name=f'Pin {first}',exact=True).click()
+                page.get_by_role('checkbox',name='Pinned genes only',exact=True).check()
+                expect(page.locator('.gene-panel-grid > .gene-panel')).to_have_count(1)
+                page.get_by_role('checkbox',name='Pinned genes only',exact=True).uncheck()
+                page.get_by_label('Find gene in dashboard',exact=True).fill('no-such-gene')
+                expect(page.locator('.gene-panel-grid')).to_contain_text('No genes match')
+                page.get_by_role('button',name='Show all genes',exact=True).click()
+                page.locator('.figure-appearance summary').click()
+                color_input=page.locator('.series-color-options input[type=color]').first
+                color_input.fill('#663399')
+                assert page.locator('.gene-panel-grid svg [stroke="#663399"]').count()>0
+                prefs=page.evaluate("key=>JSON.parse(localStorage.getItem(key))",f'qpcr-presentation-v1:{experiment_id}')
+                assert prefs['order']==expected_order and first in prefs['favorites']
+                assert detail()['context_revision']==before_appearance['context_revision']
+                assert len(page.request.get(path+'/analyses').json())==version_count
+                page.reload()
+                page.locator('.experiment-open').first.click()
+                page.get_by_role('button',name='All genes',exact=True).click()
+                page.get_by_role('button',name='Raw Ct',exact=True).click()
+                assert page.locator('.gene-panel-grid > .gene-panel').evaluate_all("nodes=>nodes.map(node=>node.dataset.assay)")==expected_order
+                assert page.locator('.gene-panel-grid svg [stroke="#663399"]').count()>0
+                page.get_by_role('button',name='Expression',exact=True).click()
+                page.get_by_label('Gene dashboard columns' ,exact=True).select_option('3')
+                page.screenshot(path='/tmp/qpcr-all-genes.png',full_page=True)
+                page.emulate_media(media='print')
+                assert page.locator('.gene-panel-grid .figure-scroll').first.evaluate("node=>getComputedStyle(node).aspectRatio")=='auto'
+                page.pdf(path='/tmp/qpcr-all-genes.pdf',format='A4',print_background=True);page.emulate_media(media='screen')
+                page.set_viewport_size({'width':390,'height':844})
+                assert page.evaluate('document.body.scrollWidth')<=391
+                page.set_viewport_size({'width':1440,'height':1000})
+                page.get_by_role('button',name='Overview',exact=True).click()
                 # Compact defaults and deliberate report expansion.
                 page.get_by_role('button',name='Figure builder / report',exact=True).click()
                 page.get_by_role('checkbox',name='Target Ct',exact=True).check()
@@ -230,13 +344,93 @@ def main() -> None:
                 page.evaluate('window.scrollTo(0,0)');page.screenshot(path='/tmp/qpcr-upgrade-overview.png')
                 page.set_viewport_size({'width':390,'height':844});page.evaluate('window.scrollTo(0,0)')
                 assert page.evaluate('document.body.scrollWidth')<=391, 'Mobile page must not overflow horizontally.'
-                page.get_by_role('button',name='Projects / upload',exact=True).click()
+                page.get_by_role('button',name='+ Upload results',exact=True).click()
                 expect(page.locator('.sidebar .panel').first).to_be_visible()
-                page.get_by_role('button',name='Close workspace',exact=True).click()
+                page.keyboard.press('Escape')
+                expect(page.get_by_role('dialog',name='Upload results')).not_to_be_visible()
                 page.screenshot(path='/tmp/qpcr-upgrade-mobile.png')
+                page.get_by_role('button',name='All experiments',exact=False).click()
+                expect(page.locator('.library-table')).to_contain_text(re.compile('Saved|Partially calculated'))
+                assert page.evaluate('document.body.scrollWidth')<=391
+                page.screenshot(path='/tmp/qpcr-library-mobile.png')
+                page.set_viewport_size({'width':1440,'height':1000})
+                page.screenshot(path='/tmp/qpcr-library-desktop.png')
+                # A second upload remains a distinct library entry; duplicate names are disclosed.
+                page.get_by_role('button',name='+ Upload results',exact=True).click()
+                page.get_by_label('File',exact=True).set_input_files(workbook)
+                expect(page.locator('.upload-duplicate')).to_contain_text('already in this project')
+                page.get_by_label('Experiment label',exact=True).fill('Second experiment')
+                page.get_by_role('button',name='Import raw results',exact=True).click()
+                expect(page.locator('.overview-heatmap')).to_contain_text('Raw Ct across conditions and time',timeout=20000)
+                page.get_by_role('button',name='All experiments',exact=False).click()
+                expect(page.locator('.library-table tbody tr')).to_have_count(2)
+                page.get_by_label('Library status',exact=True).select_option('setup')
+                listed=page.request.get(api+'/api/projects').json()[0]['experiments']
+                expected_incomplete=sum(e['library_summary']['analysis_state'] in ['partial','not_calculated'] for e in listed)
+                expect(page.locator('.library-table tbody tr')).to_have_count(expected_incomplete)
+                expect(page.locator('.library-table')).to_contain_text('Second experiment')
+                page.get_by_label('Library status',exact=True).select_option('all')
+                page.get_by_label('Library sort',exact=True).select_option('oldest')
+                expect(page.locator('.experiment-open').last).to_contain_text('Second experiment')
+                # A known inferential fixture checks normal probability plots and adjusted significance.
+                project2=page.request.post(api+'/api/projects',data={'name':'Distribution diagnostics fixture'}).json()
+                import csv as csv_module
+                import io
+                buffer=io.StringIO();writer=csv_module.writer(buffer);writer.writerow(['Well','Sample Name','Target Name','CT'])
+                base_samples=[];groups={};well_index=0
+                for day in [0,21]:
+                    for replicate in range(6):
+                        name=f'Fixture confluency_100% day {day}.{replicate+1}'
+                        groups[name]='baseline' if day==0 else 'treatment'
+                        if day==0:base_samples.append(name)
+                        for assay in ['T','R']:
+                            for technical in range(2):
+                                value=(24 if day==0 else 20)+replicate*.1 if assay=='T' else 20+replicate*.01
+                                writer.writerow([f'{chr(65+well_index//12)}{well_index%12+1}',name,assay,value+technical*.02]);well_index+=1
+                uploaded=page.request.post(api+f"/api/projects/{project2['id']}/upload",multipart={'name':'Normality fixture','file':{'name':'normality.csv','mimeType':'text/csv','buffer':buffer.getvalue().encode()}}).json()
+                normality_path=api+f"/api/projects/{project2['id']}/experiments/{uploaded['id']}"
+                design={'time_origin':'treatment','experimental_unit':'independent culture','design_type':'independent','confirmed':True}
+                assert page.request.patch(normality_path+'/design',data=design).ok
+                calculated=page.request.post(normality_path+'/analyze',data={'target_assay':'T','reference_assays':['R'],'baseline_samples':base_samples,'sample_groups':groups,'run_id':uploaded['runs'][0]['id'],'statistics_method':'welch','assumptions_confirmed':True})
+                assert calculated.ok,calculated.text()
+                significant_result=calculated.json()
+                adjusted=significant_result['statistics']['comparisons'][0]['adjusted_p_value'];assert adjusted<.05
+                page.get_by_role('button',name='Experiments',exact=True).click()
+                page.get_by_label('Search experiments',exact=True).fill('Normality fixture')
+                page.locator('.experiment-open').click()
+                evidence_chart=page.get_by_role('img',name='T · normalized expression',exact=True)
+                marker=evidence_chart.locator('[data-significance-p]')
+                expect(marker).to_have_count(1)
+                assert abs(float(marker.get_attribute('data-significance-p'))-adjusted)<1e-12
+                expect(page.locator('.figure-comparisons summary')).to_contain_text('1 significant / 1 tested')
+                page.locator('.figure-appearance summary').click()
+                page.get_by_role('checkbox',name='Show significance markers',exact=True).uncheck()
+                expect(marker).to_have_count(0)
+                page.get_by_role('checkbox',name='Show significance markers',exact=True).check()
+                page.get_by_role('button',name='QC review',exact=True).click()
+                expect(page.locator('svg[data-probability-plot]')).to_have_count(2)
+                assert page.locator('svg[data-probability-plot]').first.locator('circle').count()==6
+                with page.expect_download() as download:page.get_by_role('button',name='Export probability plot SVG',exact=True).first.click()
+                diagnostic_svg=ET.parse(download.value.path()).getroot();assert diagnostic_svg.attrib['width']=='85mm'
+                page.locator('.distribution-diagnostics').screenshot(path='/tmp/qpcr-distribution-diagnostics.png')
+                page.get_by_role('button',name='Expression',exact=True).click()
+                with page.expect_download() as download:page.get_by_role('button',name='Download T expression SVG',exact=True).click()
+                significant_svg=ET.parse(download.value.path()).getroot()
+                assert any('data-significance-p' in element.attrib for element in significant_svg.iter())
+                page.locator('.assay-inspector .figure-card').screenshot(path='/tmp/qpcr-significance-result.png')
+                # A changed design marks the old test historical and removes its plot star.
+                page.get_by_role('button',name='Samples & design',exact=True).click()
+                design_panel=page.locator('.samples-workspace .design-panel')
+                design_panel.get_by_label('Study design',exact=False).select_option('paired')
+                design_panel.get_by_role('checkbox').check()
+                design_panel.get_by_role('button',name='Save experimental design',exact=True).click()
+                expect(design_panel).to_contain_text('Design saved.')
+                page.get_by_role('button',name='Overview',exact=True).click()
+                expect(evidence_chart.locator('[data-significance-p]')).to_have_count(0)
+                expect(page.locator('.figure-comparisons summary')).to_contain_text('Historical statistics')
                 assert not errors, errors
                 browser.close()
-                print('PASS: review-first overview; QC survives filters; exclusion preview and audit; missing-run coverage; per-run identities; stale/rebuild; explicit design; 1x figures; physical SVG/data/methods/PDF exports; responsive workspace; no browser errors.')
+                print('PASS: remembered colors; native drag and keyboard order; pins/search/undo; biological normal probability plots; Holm stars and stale suppression; compact/proportional axes; baseline label outside plot; all-gene grid and biological filters; 600 dpi PNG/SVG/PDF; experiment library, search/status/sort, duplicate upload notice, raw cell context, bulk sample editing, mobile cards; review-first overview; QC survives filters; exclusion preview and audit; missing-run coverage; per-run identities; stale/rebuild; explicit design; 1x figures; physical SVG/data/methods/PDF exports; responsive workspace; no browser errors.')
         finally:
             for process in processes:
                 process.terminate()

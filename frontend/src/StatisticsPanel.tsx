@@ -1,9 +1,9 @@
-export type Diagnostic = { status: string; p_value: number | null; reason: string }
+export type Diagnostic = { probability_plot?:{theoretical:number[];observed:number[];slope:number;intercept:number;r_squared:number}; status: string; p_value: number | null; reason: string }
 export type GroupResult = {
   condition: string; samples: string[]; n: number; incomplete_n: number
   fold_change_mean: number | null; fold_change_sd: number | null
   is_baseline: boolean; above_threshold: boolean | null
-  replicates_above_threshold: number | null; normality: Diagnostic
+  replicates_above_threshold: number | null; delta_ct_values?:number[]; normality: Diagnostic
 }
 export type StatisticalResult = {
   design_confirmed?:boolean

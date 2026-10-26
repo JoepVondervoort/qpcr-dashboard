@@ -44,3 +44,11 @@ export function analysisGroup(m:SampleMetadata):string {
  const base=m.condition.replace(/\b(days?|dpt|d|hours?|hrs?|h)\s*-?\d+(?:\.\d+)?\b/ig,'').replace(/^[ _·-]+|[ _·-]+$/g,'')
  return `${base||m.series} · ${m.time_unit==='hour'?'Hour':'Day'} ${m.timepoint}`
 }
+
+// Explicit annotations override conservative name-based suggestions, including a blank value.
+export function sampleFactors(metadata: SampleMetadata): {cell_line:string;confluency:string} {
+ const label=`${metadata.condition} ${metadata.series}`
+ const line=label.match(/(?:^|[ _-])(HDFn|HeLa|AF22)(?=$|[ _-])/i)?.[1]??''
+ const confluency=label.match(/confluen(?:cy|ce)[ _-]*(\d+(?:\.\d+)?)\s*%/i)?.[1]
+ return {cell_line:metadata.cell_line??line,confluency:metadata.confluency??(confluency?`${Number(confluency)}%`:'')}
+}

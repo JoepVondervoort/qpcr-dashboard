@@ -527,3 +527,189 @@ th {
 .review-banner { padding:14px 18px; }
 .rebuild-status { margin:10px 0; }
 .rebuild-status summary { cursor:pointer; }
+
+/* Experiment library and compact research workspace. */
+[hidden] { display:none !important; }
+button, .button-link { background:#176c70; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline:3px solid #398fa1; outline-offset:3px; }
+.workspace-rail { width:208px; flex:0 0 208px; background:#112c36; color:#dce8eb; padding:32px 18px; display:flex; flex-direction:column; gap:14px; position:sticky; top:0; height:100vh; }
+.workspace-brand { font-size:29px; font-weight:700; color:white; text-decoration:none; margin-bottom:28px; }
+.workspace-brand span { display:block; color:#b1c7ce; font-size:12px; font-weight:400; margin-top:5px; }
+.rail-link { background:transparent; color:#dce8eb; text-align:left; padding:12px; }
+.rail-link.active { background:#284852; }
+.rail-upload { text-align:left; padding:12px; border:1px solid #5f8e96; background:transparent; }
+.rail-note { margin-top:auto; font-size:12px; color:#b1c7ce; line-height:1.8; }
+.main-panel { min-width:0; padding:28px 32px; gap:0; }
+.experiment-workspace { min-width:0; }
+.back-library { color:#466572; background:transparent; padding:0; margin-bottom:18px; font-size:13px; }
+.topbar { margin-bottom:12px; }
+.topbar h2 { font-size:24px; overflow-wrap:anywhere; }
+.topbar .helper-text { margin:6px 0 0; font-size:12px; }
+.topbar .helper-text span { display:inline-block; max-width:440px; overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; white-space:nowrap; }
+.status-bar { font-size:12px; padding:8px 12px; font-weight:400; margin:10px 0; }
+.status-bar:empty { display:none; }
+.view-tabs { display:flex; flex-wrap:wrap; gap:6px; margin:16px 0; padding-bottom:14px; border-bottom:1px solid #dce6e8; }
+.view-tabs button { font-size:13px; }
+.library-heading { display:flex; gap:20px; justify-content:space-between; align-items:center; margin-bottom:26px; }
+.library-heading h2 { font-size:32px; letter-spacing:-.04em; margin:0; }
+.library-heading p:not(.eyebrow) { color:#526b77; font-size:14px; margin:10px 0 0; }
+.library-heading button { padding:12px 18px; white-space:nowrap; }
+.library-heading .eyebrow { color:#526b77; }
+.library-totals { display:flex; flex-wrap:wrap; gap:28px; margin-bottom:30px; font-size:13px; color:#526b77; }
+.library-totals strong { color:#183d48; font-size:21px; padding-right:5px; }
+.library-toolbar { display:grid; grid-template-columns:minmax(220px,2fr) repeat(3,minmax(120px,1fr)); gap:16px; background:white; padding:18px; border:1px solid #dce6e8; border-radius:12px; }
+.library-toolbar label { margin:0; color:#365360; }
+.library-toolbar input,.library-toolbar select { width:100%; min-width:0; background:#fafcfc; }
+.library-count,.library-footnote { color:#526b77; font-size:12px; line-height:1.8; margin:18px 0; }
+.library-table-wrap { overflow-x:auto; border:1px solid #dce6e8; border-radius:12px; background:white; }
+.library-table { width:100%; min-width:900px; border-collapse:collapse; }
+.library-table th { font-size:11px; font-weight:600; color:#526b77; background:#f5f9f9; text-align:left; padding:16px 12px; white-space:normal; }
+.library-table td { padding:20px 12px; font-size:13px; vertical-align:top; border-bottom:1px solid #e5ecef; }
+.library-table tbody tr:last-child td { border:0; }
+.library-table tbody tr:hover { background:#f6faf9; }
+.library-table td:first-child { min-width:220px; max-width:320px; }
+.library-table small { display:block; font-size:11px; color:#526b77; margin-top:7px; }
+.experiment-open { background:transparent; padding:0; color:#185e65; font-size:14px; line-height:1.5; text-align:left; overflow-wrap:anywhere; }
+.source-filename { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:240px; }
+.state-chip { display:inline-block; border-radius:5px; padding:5px 7px; font-size:11px; white-space:nowrap; }
+.state-review { color:#80551f; background:#fff1d7; }
+.state-neutral { color:#395e65; background:#edf4f4; }
+.library-empty { text-align:center; border:1px dashed #b8cdd3; border-radius:14px; padding:65px 24px; margin-top:24px; background:#fff; }
+.library-empty>div { margin:auto auto 18px; width:54px; height:54px; background:#e8f3f1; border-radius:14px; color:#176c70; font-size:34px; }
+.library-empty h3 { font-size:23px; }
+.library-empty p { max-width:470px; margin:14px auto; color:#526b77; font-size:14px; line-height:1.7; }
+.upload-backdrop { position:fixed; inset:0; background:#122c3670; z-index:40; }
+.sidebar { position:fixed; inset:0 0 0 auto; width:440px; height:100vh; overflow-y:auto; z-index:41; padding:24px; background:#112c36; }
+.sidebar .panel { flex:none; }
+.sidebar .helper-text { color:#bcced3; }
+.sidebar .upload-close { align-self:end; color:white; background:transparent; border:1px solid #73939c; }
+.sidebar .workspace-toggle { display:none; }
+.sidebar .project-list button { color:#deebee; background:#284852; border-color:#4a6c77; }
+.sidebar .project-list .selected { background:#176c70; }
+.sidebar>div:first-of-type h1 { font-size:26px; }
+.dashboard-intro { margin:12px 0; }
+.dashboard-intro h3 { font-size:20px; }
+.dashboard-intro p:not(.eyebrow) { font-size:12px; margin:5px 0 0; color:#526b77; }
+.review-banner { padding:10px 14px; gap:12px; }
+.review-banner strong { font-size:13px; }
+.review-banner p { margin-top:4px; font-size:12px; }
+.overview-summary { display:flex; flex-wrap:wrap; gap:20px; font-size:12px; color:#526b77; margin:14px 0; }
+.overview-summary strong { color:#234d58; font-size:15px; }
+.dashboard-filters { padding:12px; position:static; }
+.dashboard-filters label { font-size:12px; }
+.dashboard-scope { font-size:12px; color:#526b77; margin:8px 0; line-height:1.6; }
+.dashboard-scope details { display:inline-block; margin-left:12px; max-width:600px; }
+.dashboard-scope summary { cursor:pointer; }
+.overview-mode { display:flex; gap:12px; justify-content:space-between; align-items:center; margin:16px 0 8px; }
+.overview-heatmap { margin:8px 0 14px; padding:16px; }
+.overview-heatmap .dashboard-footnote { font-size:12px; color:#526b77; line-height:1.6; margin:8px 0; }
+.overview-heatmap h3 { font-size:18px; }
+.empty-cell { border:1px dashed #a6b7bf; }
+.figure-options { margin:10px 0; color:#526b77; }
+.assay-inspector { margin:20px 0; }
+.inspector-context { background:#edf5f5; padding:10px; font-size:13px; line-height:1.7; }
+.text-button { color:#176c70; text-decoration:underline; background:transparent; font-size:inherit; padding:2px; }
+.samples-workspace>p { color:#526b77; font-size:14px; }
+.mapping-toolbar,.mapping-bulk,.quality-triage { display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin:16px 0; }
+.mapping-toolbar label,.mapping-bulk label,.quality-triage label { margin:0; flex:1; min-width:140px; }
+.mapping-bulk { padding:14px; background:#edf4f4; border-radius:8px; }
+.mapping-bulk strong { font-size:12px; align-self:center; }
+.sample-mapping .results-table-wrap { max-height:600px; }
+.sample-mapping thead th { position:sticky; top:0; background:#f2f7f8; z-index:1; }
+.sample-mapping td:first-child { width:40px; }
+.sample-mapping input[type=checkbox] { min-width:0; width:16px; }
+.sample-mapping td:nth-child(2) { position:sticky; left:0; background:white; min-width:200px; max-width:250px; z-index:1; }
+@media(max-width:1100px) { .app-shell { flex-direction:row; }.workspace-rail { width:170px; flex-basis:170px; padding:24px 12px; }.main-panel { padding:24px; }.library-toolbar { grid-template-columns:1fr 1fr; }.sidebar { display:flex; width:420px; flex-direction:column; }.review-banner { flex-direction:column; align-items:start; } }
+@media(max-width:650px) { .app-shell { flex-direction:column; }.workspace-rail { position:static; height:auto; width:100%; flex:0 0 auto; padding:12px 16px; flex-direction:row; align-items:center; gap:10px; }.workspace-brand { font-size:21px; margin:0 auto 0 0; }.workspace-brand span,.rail-note { display:none; }.rail-link,.rail-upload { font-size:12px; padding:9px; }.main-panel { padding:16px!important; }.library-heading { align-items:start; flex-direction:column; margin:12px 0 20px; gap:14px; }.library-heading h2 { font-size:27px; }.library-heading>button { width:100%; }.library-totals { gap:12px; margin-bottom:18px; }.library-totals span { font-size:11px; }.library-totals strong { font-size:16px; }.library-toolbar { padding:12px; gap:12px; }.library-toolbar label:first-child { grid-column:1/-1; }.library-toolbar label:last-child { grid-column:1/-1; }.sidebar { width:min(440px,100%); display:flex; }.sidebar>div:not(:first-child) { display:block; }.sidebar::after { content:none; }.topbar h2 { font-size:21px; }.topbar .helper-text span { max-width:250px; }.view-tabs { gap:5px; }.view-tabs button { padding:8px; font-size:12px; }.dashboard-intro>div:first-child p { display:none; }.dashboard-intro { gap:10px; }.review-banner p { font-size:11px; line-height:1.5; }.review-banner>div:last-child button { font-size:11px; padding:8px; }.overview-summary { gap:10px; margin:10px 0; }.dashboard-filters { grid-template-columns:1fr 1fr; gap:10px; }.dashboard-filters .assay-filter { padding:0; align-self:end; }.dashboard-scope details { display:none; }.overview-mode { flex-wrap:wrap; }.heatmap-scroll { max-height:430px; }.mapping-toolbar,.mapping-bulk,.quality-triage { align-items:stretch; }.mapping-toolbar button,.mapping-bulk button { align-self:end; }.samples-workspace .sample-mapping { margin:10px 0; } }
+@media print { .workspace-rail,.back-library,.overview-summary,.overview-mode,.upload-backdrop,.experiment-library,.inspector-context { display:none!important; }.main-panel { padding:0!important; }.experiment-workspace { display:block; }.dashboard-scope { display:none; } }
+.upload-status,.upload-duplicate { color:#dce8eb; font-size:13px; line-height:1.7; overflow-wrap:anywhere; }
+.upload-status:empty { display:none; }
+.upload-duplicate { background:#594626; padding:12px; border-radius:8px; }
+.uncalculated-cell { border-style:dotted; background:#f1f5fb!important; }
+.reference-cell { border-style:solid; background:#edf3f7!important; }
+@media(max-width:650px) { .library-table th:first-child,.library-table td:first-child { position:sticky; left:0; z-index:1; background:#fff; min-width:180px; max-width:200px; box-shadow:3px 0 6px #15333e09; }.library-table th:first-child { background:#f5f9f9; }.source-filename { max-width:170px; } }
+.mobile-filter-toggle { display:none; }
+@media(max-width:650px) {
+ .mobile-filter-toggle { display:block; margin:12px 0 8px; width:100%; text-align:left; font-size:12px; }
+ .filter-workspace[data-expanded=false] { display:none; }
+ .overview-mode { margin-top:10px; }
+ .library-table { min-width:0; }
+ .library-table thead { display:none; }
+ .library-table tbody { display:block; }
+ .library-table tbody tr { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); padding:14px; border-bottom:1px solid #dce6e8; gap:14px 10px; }
+ .library-table tbody tr:last-child { border:0; }
+ .library-table td { display:block; padding:0; border:0; font-size:13px; }
+ .library-table td:first-child { position:static; min-width:0; max-width:none; box-shadow:none; grid-column:1/-1; }
+ .library-table td[data-label]::before { content:attr(data-label); display:block; color:#526b77; font-size:11px; margin-bottom:5px; }
+ .library-table td[data-label=Uploaded] { grid-column:1/-1; }
+ .library-table td[data-label=Uploaded]::before { display:inline; margin-right:7px; }
+ .library-table td[data-label=Quality],.library-table td[data-label=Expression] { grid-column:span 3; display:flex; flex-wrap:wrap; align-items:center; gap:7px; }
+ .library-table td[data-label=Quality]::before,.library-table td[data-label=Expression]::before { margin:0; min-width:65px; }
+ .library-table td small { margin-top:0; }
+ .library-table td:first-child small { margin-top:5px; }
+ .source-filename { max-width:none; white-space:normal; overflow-wrap:anywhere; }
+}
+@media print { .mobile-filter-toggle { display:none!important; } }
+@media(max-width:650px) { .dashboard-intro>div:first-child { display:none; }.dashboard-intro { margin:10px 0; }.overview-heatmap .eyebrow { display:none; }.overview-heatmap .dashboard-footnote { font-size:11px; }.overview-heatmap h3 { font-size:16px; } }
+.factor-filters { display:flex; flex-wrap:wrap; align-items:center; gap:14px 26px; padding:12px 14px; margin:12px 0; background:#fff; border:1px solid #dce6e8; border-radius:10px; }
+.factor-group { display:flex; align-items:center; gap:12px; font-size:12px; }
+.factor-group>div { display:flex; flex-wrap:wrap; gap:5px; }
+.filter-chip { padding:6px 11px; font-size:12px; font-weight:500; background:#fff; border:1px solid #c8dadd; color:#365e66; }
+.filter-chip[aria-pressed=true] { background:#e3f1ef; border-color:#6da29e; color:#175a5f; }
+.factor-filters>.text-button { margin-left:auto; font-size:12px; }
+.all-genes-controls { display:flex; flex-wrap:wrap; align-items:end; gap:14px; margin:18px 0; }
+.all-genes-controls label { font-size:12px; margin:0; }
+.all-genes-controls .segmented { align-self:center; }
+.gene-panel-grid { display:grid; gap:16px; align-items:start; }
+.gene-panel-grid>* { min-width:0; }
+.gene-panel-grid .figure-card { width:100%; }
+.gene-panel-grid .figure-caption { display:none; }
+.gene-panel-grid .figure-analysis-links { padding:8px; }
+.gene-panel-grid .coverage-badges { margin-top:0; }
+.gene-panel-grid .figure-downloads { gap:4px; }
+.gene-panel-grid .figure-export { font-size:10px; padding:5px 7px; }
+.figure-export-status { margin:8px 14px; font-size:12px; color:#365e66; }
+.figure-export { cursor:pointer; }
+@media(max-width:1100px) { .gene-panel-grid { grid-template-columns:repeat(2,minmax(0,1fr))!important; } }
+@media(max-width:650px) { .factor-filters { gap:10px; padding:10px; }.factor-group { width:100%; align-items:start; }.factor-group>strong { min-width:65px; padding-top:5px; }.factor-filters>.text-button { margin-left:0; }.gene-panel-grid { grid-template-columns:1fr!important; }.all-genes-controls { gap:10px; } }
+@media print { .factor-filters,.all-genes-controls,.all-genes-dashboard>.dashboard-footnote,.figure-export-status { display:none!important; }.gene-panel-grid { display:grid!important;grid-template-columns:repeat(2,90mm)!important;gap:4mm; }.gene-panel-grid>* { break-inside:avoid; }.research-dashboard[data-mode=genes] .figure-card { width:90mm!important;max-width:90mm!important; }.research-dashboard[data-mode=genes] .figure-card svg { width:85mm!important;max-width:85mm!important; } }
+.compact-figure-key { padding:8px 12px; margin:0; font-size:11px; line-height:1.6; color:#526b77; border-top:1px solid #e3ebed; }
+.research-dashboard[data-mode=genes] .mobile-filter-toggle { display:block; margin:10px 0; font-size:12px; }
+.research-dashboard[data-mode=genes] .filter-workspace[data-expanded=false] { display:none; }
+.research-dashboard[data-mode=genes] .review-banner p,.research-dashboard[data-mode=genes] .dashboard-intro p { display:none; }
+.research-dashboard[data-mode=genes] .review-banner .state-chip { margin-left:10px; }
+@media print { .gene-panel-grid .figure-scroll { aspect-ratio:auto!important; overflow:visible!important; }.research-dashboard[data-mode=genes] .mobile-filter-toggle { display:none!important; } }
+.figure-appearance { padding:12px 14px; margin:12px 0; font-size:12px; border:1px solid #dce6e8; border-radius:10px; background:white; }
+.figure-appearance summary { cursor:pointer; font-weight:600; color:#365e66; }
+.appearance-options { display:flex; flex-wrap:wrap; gap:16px; align-items:end; margin:16px 0; }
+.appearance-options label { margin:0; }
+.series-color-options { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+.series-color-options label { display:flex; align-items:center; font-size:12px; margin:0; }
+.series-color-options input { width:42px; height:32px; padding:3px; flex-shrink:0; cursor:pointer; }
+.figure-appearance p { color:#526b77; line-height:1.7; margin:12px 0 0; }
+.gene-panel { border-radius:10px; min-width:0; }
+.gene-panel[data-drop-target=true] { outline:3px solid #398fa1; outline-offset:4px; }
+.gene-panel[data-dragging=true] { opacity:.65; }
+.gene-panel-toolbar { display:flex; gap:5px; align-items:center; padding:7px 9px; margin-bottom:6px; border:1px solid #dce6e8; border-radius:9px; background:#fff; }
+.gene-panel-toolbar>strong { margin-right:auto; font-size:12px; overflow-wrap:anywhere; }
+.gene-panel-toolbar button { padding:5px 7px; font-size:11px; }
+.plot-drag-handle { cursor:grab; background:transparent; color:#526b77; }
+.plot-drag-handle:active { cursor:grabbing; }
+.gene-panel-toolbar button[aria-pressed=true] { background:#e3f1ef; border-color:#6da29e; }
+.layout-status { color:#526b77; font-size:12px; }
+.layout-status:empty { display:none; }
+.figure-comparisons { margin:10px 12px; padding:10px 0; border-top:1px solid #e3ebed; font-size:12px; }
+.figure-comparisons summary { cursor:pointer; font-weight:600; color:#365e66; }
+.figure-comparisons p { line-height:1.7; color:#526b77; }
+.figure-comparisons small { display:block; font-size:11px; margin-top:6px; line-height:1.6; }
+.distribution-diagnostics { margin:24px 0; border:1px solid #dce6e8; border-radius:12px; padding:18px; background:#f8fbfb; }
+.distribution-diagnostics p { font-size:12px; color:#526b77; line-height:1.7; }
+.distribution-diagnostics summary { font-size:13px; font-weight:600; cursor:pointer; margin:14px 0; }
+.diagnostic-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); align-items:start; gap:14px; margin:16px 0; }
+.diagnostic-group { border:1px solid #dce6e8; border-radius:9px; background:white; padding:12px; min-width:0; }
+.diagnostic-group h5 { margin:0; font-size:13px; overflow-wrap:anywhere; }
+.diagnostic-group svg { display:block; width:100%; max-width:420px; height:auto; }
+.diagnostic-provenance { overflow-wrap:anywhere; }
+.diagnostic-unavailable { background:#eef4f5; padding:10px; border-radius:7px; }
+@media(max-width:650px) { .appearance-options { align-items:start; flex-direction:column; }.gene-panel-toolbar { flex-wrap:wrap; }.diagnostic-grid { grid-template-columns:1fr; }.distribution-diagnostics { padding:12px; } }
+@media print { .figure-appearance,.gene-panel-toolbar,.layout-status,.figure-comparisons,.distribution-diagnostics { display:none!important; } }

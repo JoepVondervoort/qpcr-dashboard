@@ -1,6 +1,6 @@
 import type { StatisticalResult } from './StatisticsPanel'
 
-export type SampleMetadata = { condition: string; series: string; timepoint: number | null; time_unit: 'day' | 'hour'; replicate: string; biological_unit_id?: string; role?: 'biological'|'technical_control'|null }
+export type SampleMetadata = { cell_line?: string|null; confluency?: string|null; condition: string; series: string; timepoint: number | null; time_unit: 'day' | 'hour'; replicate: string; biological_unit_id?: string; role?: 'biological'|'technical_control'|null }
 
 export type ExperimentDesign = {time_origin: string; design_type: 'unknown'|'independent'|'paired'|'blocked'|'repeated'; experimental_unit: string; confirmed: boolean; reference_validation_note: string; efficiency_note: string}
 export type QualityFlag = {id:string; kind:'control_signal'|'technical_spread'; run_id:string; sample:string; sample_instance_id:string; assay:string; message:string; range:number|null; status:'needs_review'|'reviewed'; review?:{reason:string;at:string}; measurements:(RawRecord & {excluded_reason?:string})[]}
@@ -80,7 +80,11 @@ export type AnalysisResult = {
   samples: SampleRow[]
 }
 
+export type LibrarySummary = {assay_count:number;biological_sample_count:number;unresolved_count:number;reviewed_count:number;design_confirmed:boolean;analysis_state:"needs_recalculation"|"partial"|"saved"|"not_calculated";saved_result_count:number;outdated_result_count:number}
+
 export type Experiment = {
+  created_at?: string
+  library_summary?: LibrarySummary
   id: string
   name: string
   status: string

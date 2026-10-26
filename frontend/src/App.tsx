@@ -7,8 +7,11 @@ import type { AnalysisResult, Experiment, Project, RawRecord, Run, SampleMetadat
 import {DesignPanel} from './DesignPanel'
 import {sampleKey,sampleAnnotation,analysisGroup} from './plotData'
 import { Dashboard } from './Dashboard'
+import {DistributionDiagnostics} from './DistributionDiagnostics'
+import {ExperimentLibrary} from './ExperimentLibrary'
+import {SampleMappingPanel} from './SampleMappingPanel'
 
-const API_ROOT = (import.meta.env.VITE_API_ROOT ?? 'http://localhost:8000').replace(/\/$/, '')
+const API_ROOT = (import.meta.env.VITE_API_ROOT ?? '').replace(/\/$/, '')
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_ROOT}${path}`, {
@@ -23,17 +26,20 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function App() {
-  const [showWorkspace,setShowWorkspace]=useState(false)
+  const [libraryOpen,setLibraryOpen]=useState(true)
+  const [libraryLoading,setLibraryLoading]=useState(true)
+  const [libraryError,setLibraryError]=useState('')
+  const [uploadOpen,setUploadOpen]=useState(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [selectedExperimentId, setSelectedExperimentId] = useState('')
   const [detail, setDetail] = useState<Experiment | null>(null)
   const [selectedRunId, setSelectedRunId] = useState('')
-  const [projectName, setProjectName] = useState('saRNA pilot project')
+  const [projectName, setProjectName] = useState('My qPCR project')
   const [uploadName, setUploadName] = useState('')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
-  const [status, setStatus] = useState('Ready')
+  const [status, setStatus] = useState('')
   const [analysisConfig, setAnalysisConfig] = useState({
     targetAssay: '',
     referenceAssays: [] as string[],
@@ -95,6 +101,24 @@ function App() {
     if(draft){setAnalysisConfig(draft.analysisConfig);setBaselineSamples(draft.baselineSamples);setExcludedSamples(draft.excludedSamples);setHitThreshold(draft.hitThreshold);setStatisticsMethod(draft.statisticsMethod);setAssumptionsConfirmed(draft.assumptionsConfirmed);setSetupEdited(true)}
   },[])
 
+  useEffect(()=>{
+    if(!uploadOpen)return
+    const previous=document.activeElement as HTMLElement|null
+    const overflow=document.body.style.overflow
+    document.body.style.overflow='hidden'
+    document.querySelector<HTMLButtonElement>('.upload-close')?.focus()
+    function keys(event:KeyboardEvent){
+      if(event.key==='Escape'&&!importing){setUploadOpen(false);return}
+      if(event.key!=='Tab')return
+      const nodes=Array.from(document.querySelectorAll<HTMLElement>('.sidebar button:not(:disabled), .sidebar input:not(:disabled), .sidebar select:not(:disabled), .sidebar a[href]')).filter(node=>node.getClientRects().length>0)
+      const first=nodes[0],last=nodes[nodes.length-1]
+      if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus()}
+      else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus()}
+    }
+    document.addEventListener('keydown',keys)
+    return()=>{document.body.style.overflow=overflow;document.removeEventListener('keydown',keys);previous?.focus()}
+  },[uploadOpen,importing])
+
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null
   const activeExperimentId = selectedProject?.experiments.some((item) => item.id === selectedExperimentId)
     ? selectedExperimentId
@@ -130,11 +154,7 @@ function App() {
 
   useEffect(() => {
     void loadProjects()
-    void apiFetch<{ paths?: Record<string, unknown>; components?: { schemas?: { AnalysisRequest?: { properties?: Record<string, unknown> } } } }>('/openapi.json')
-      .then(schema => setBackendIssue(schema.components?.schemas?.AnalysisRequest?.properties?.baseline_samples && schema.paths?.['/api/projects/{project_id}/experiments/{experiment_id}/quality-review']
-        ? ''
-        : 'The running qPCR backend is outdated. Restart the backend with the current code, then refresh this page.'))
-      .catch(() => setBackendIssue('Cannot check the backend connection. Start the qPCR backend, then refresh this page.'))
+    void checkBackend()
   }, [])
 
   useEffect(() => {
@@ -159,7 +179,7 @@ function App() {
           setDetail(value)
           setSelectedStatistics(null)
           setDesignDraft(null);setMappingDirty(false)
-          setActiveTab(Array.isArray(value.analysis_result?.samples) ? 'dashboard' : 'setup')
+          setActiveTab('dashboard')
           setSampleMetadata(value.sample_metadata ?? {})
           setSampleInstances(value.sample_instances ?? {})
           setHistoricalResult(null)
@@ -174,7 +194,16 @@ function App() {
     }
   }, [selectedProjectId, activeExperimentId, configureRun])
 
+  async function checkBackend() {
+    await apiFetch<{ paths?: Record<string, unknown>; components?: { schemas?: { AnalysisRequest?: { properties?: Record<string, unknown> } } } }>('/openapi.json')
+      .then(schema => setBackendIssue(schema.components?.schemas?.AnalysisRequest?.properties?.baseline_samples && schema.paths?.['/api/projects/{project_id}/experiments/{experiment_id}/quality-review']
+        ? ''
+        : 'The running qPCR backend is outdated. Restart the backend with the current code, then refresh this page.'))
+      .catch(() => setBackendIssue('Cannot check the backend connection. Start the qPCR backend, then refresh this page.'))
+  }
+
   async function loadProjects() {
+    setLibraryLoading(true);setLibraryError('')
     try {
       const data = await apiFetch<Project[]>('/api/projects')
       setProjects(data)
@@ -182,8 +211,8 @@ function App() {
         data.some((project) => project.id === current) ? current : data[0]?.id ?? '',
       )
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Failed to load projects')
-    }
+      setLibraryError(error instanceof Error ? error.message : 'Could not load experiments.')
+    } finally {setLibraryLoading(false)}
   }
 
   async function createProject() {
@@ -204,7 +233,7 @@ function App() {
     if (!uploadFile || importing) return
     const file = uploadFile
     const form = new FormData()
-    form.append('name', uploadName || file.name)
+    form.append('name', uploadName.trim() || file.name.replace(/\.(xlsx|xlsm|csv)$/i,''))
     form.append('file', file)
     setImporting(true)
     setStatus('Importing workbook and detecting instrument runs…')
@@ -231,9 +260,9 @@ function App() {
       setHistoricalResult(null)
       setVersions([])
       setSelectedExperimentId(result.id)
-      setActiveTab('setup')
-      setStatus(`Imported ${result.record_count} measurements from ${result.runs.length} instrument run(s). ${result.runs.length > 1 ? 'Viewing the first run; select another below. Runs are kept separate.' : 'Review the suggested setup below.'}${result.warnings.length ? ` ${result.warnings.length} import warning(s).` : ''}`)
-      setShowWorkspace(false)
+      setActiveTab('dashboard')
+      setLibraryOpen(false);setUploadOpen(false)
+      setStatus(`Imported ${result.record_count} measurements from ${result.runs.length} instrument run(s). Raw results are ready; runs remain separate.${result.warnings.length ? ` ${result.warnings.length} import warning(s).` : ''}`)
       setUploadFile(null)
       if (fileInput.current) fileInput.current.value = ''
       setUploadName('')
@@ -316,11 +345,11 @@ function App() {
       shouldScrollToResults.current = true
       setDetail((current) => (current ? { ...current, analysis_result: result } : current))
       setHistoricalResult(null)
-      setStatus(`Dashboard created: ${completed} target assay(s) in ${selectedRun.name}.`)
+      setStatus(`Expression saved: ${completed} target assay(s) in ${selectedRun.name}.`)
       try {
         setVersions(await apiFetch(`/api/projects/${selectedProjectId}/experiments/${activeExperimentId}/analyses`))
       } catch {
-        setStatus('Dashboard created. Analysis history could not refresh; reload to retry history.')
+        setStatus('Expression saved. Analysis history could not refresh; reload to retry history.')
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Analysis failed'
@@ -370,11 +399,14 @@ function App() {
       : ''
 
   return (
-    <div className="app-shell">
-      <aside className={`sidebar ${showWorkspace?'workspace-open':''}`}>
+    <div className={`app-shell ${uploadOpen?'upload-open':''}`}>
+      <div className="workspace-rail" inert={uploadOpen}><a className="workspace-brand" href="#experiments" onClick={event=>{event.preventDefault();setLibraryOpen(true);void loadProjects()}}>qPCR<span>Research workspace</span></a><button className={libraryOpen?'rail-link active':'rail-link'} onClick={()=>{setLibraryOpen(true);void loadProjects()}}>Experiments</button><button className="rail-upload" onClick={()=>setUploadOpen(true)}>+ Upload results</button><p className="rail-note">Raw measurements preserved.<br/>Runs kept separate.</p></div>
+      {uploadOpen&&<div className="upload-backdrop" onClick={()=>{if(!importing)setUploadOpen(false)}}/>}
+      <aside className="sidebar" hidden={!uploadOpen} role="dialog" aria-modal="true" aria-label="Upload results">
+        <button className="upload-close quiet-button" disabled={importing} onClick={()=>setUploadOpen(false)}>Close upload ×</button>
         <div>
           <p className="eyebrow">Workbench</p>
-          <h1>qPCR Analysis</h1><button className="workspace-toggle" aria-expanded={showWorkspace} onClick={()=>setShowWorkspace(v=>!v)}>{showWorkspace?'Close workspace':'Projects / upload'}</button>
+          <h1>Upload results</h1>
         </div>
         <div className="panel">
           <label>
@@ -384,7 +416,7 @@ function App() {
           <button onClick={createProject} disabled={importing}>Create project</button>
         </div>
         <div className="panel">
-          <h3>Projects</h3>
+          <h3>Add to project</h3>
           {projects.length === 0 && <p>No projects yet.</p>}
           <ul className="project-list">
             {projects.map((project) => (
@@ -406,28 +438,7 @@ function App() {
               </li>
             ))}
           </ul>
-          {selectedProject && selectedProject.experiments.length > 0 && (
-            <label className="experiment-picker">
-              <span>Experiment</span>
-              <select
-                disabled={importing}
-                value={activeExperimentId}
-                onChange={(event) => {
-                  setHistoricalResult(null)
-                  setVersions([])
-                  setSelectedExperimentId(event.target.value)
-                  setSelectedRunId('')
-                  setAnalysisConfig({ targetAssay: '', referenceAssays: [], baselineSample: '' })
-                }}
-              >
-                {selectedProject.experiments.map((experiment) => (
-                  <option key={experiment.id} value={experiment.id}>
-                    {experiment.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+
         </div>
         <div className="panel">
           <h3>Raw data upload</h3>
@@ -440,6 +451,8 @@ function App() {
             <span>File</span>
             <input ref={fileInput} type="file" accept=".csv,.xlsx,.xlsm" disabled={importing} onChange={handleFileChange} />
           </label>
+          {uploadFile&&selectedProject?.experiments.some(e=>e.original_filename===uploadFile.name)&&<p className="upload-duplicate" role="status">A file named {uploadFile.name} is already in this project. Importing again creates a separate experiment.</p>}
+          <p className="upload-status" role="status">{status}</p>
           {!selectedProjectId && <p className="helper-text">Import will create a project using the name above. No separate setup step is needed.</p>}
           <button onClick={addExperiment} disabled={!uploadFile || importing}>
             {importing ? 'Importing…' : selectedProjectId ? 'Import raw results' : 'Create project and import'}
@@ -447,20 +460,20 @@ function App() {
         </div>
       </aside>
 
-      <main className="main-panel">
+      <main className="main-panel" inert={uploadOpen}>
+        {libraryOpen&&backendIssue&&<p className="analysis-error" role="alert">{backendIssue}</p>}
+        {libraryOpen&&<ExperimentLibrary projects={projects} loading={libraryLoading} error={libraryError} onRetry={()=>{void loadProjects();void checkBackend()}} onUpload={()=>setUploadOpen(true)} onOpen={(project,experiment)=>{if(experiment!==activeExperimentId)setVersions([]);setSelectedProjectId(project);setSelectedExperimentId(experiment);setHistoricalResult(null);setLibraryOpen(false);setActiveTab('dashboard')}}/>}
+        <div className="experiment-workspace" hidden={libraryOpen}>
+        <button className="back-library" onClick={()=>{setLibraryOpen(true);void loadProjects()}}>← All experiments</button>
         <header className="topbar">
           <div>
-            <p className="eyebrow">Raw input → processed dashboard</p>
-            <h2>{selectedExperiment?.name ?? 'Import your qPCR results'}</h2>
+            <p className="eyebrow">{selectedProject?.name ?? 'qPCR results'}</p>
+            <h2>{selectedExperiment?.name.replace(/\.(xlsx|xlsm|csv)$/i,'') ?? 'Import your qPCR results'}</h2>
             <p className="helper-text">
-              {selectedExperiment?.original_filename ?? 'Upload a qPCR instrument export to begin.'}
+              {runs.length} instrument run(s) · {selectedExperiment?.parsed_summary?.record_count ?? 0} measurements · <span title={selectedExperiment?.original_filename}>{selectedExperiment?.original_filename}</span>
             </p>
           </div>
-          {analysisResult && !historicalResult && (
-            <div className="button-row">
-              <a className="button-link" href={`${API_ROOT}${exportPath}/export.csv`}>Latest analysis CSV</a>
-            </div>
-          )}
+
         </header>
         <div className="status-bar" role="status" aria-live="polite">{status}</div>
         {backendIssue && <p className="analysis-error" role="alert">{backendIssue}</p>}
@@ -470,18 +483,21 @@ function App() {
           <ol><li>Choose a CSV or Excel workbook in Raw data upload.</li><li>Click {selectedProjectId ? 'Import raw results' : 'Create project and import'}.</li><li>Review detected runs, sample groups, references and baseline samples.</li></ol>
           <p>A workbook can contain multiple runs. You can inspect each run before choosing how to analyse its samples.</p>
         </section>}
+        {selectedExperiment&&detail?.id!==activeExperimentId&&<p role="status">Loading experiment…</p>}
         <nav className="view-tabs" aria-label="Workbench views">
-          {['setup', 'dashboard', 'statistics', 'history'].map(tab => <button key={tab} aria-pressed={activeTab === tab} onClick={() => setActiveTab(tab)}>
-            {tab === 'setup' ? '1 · Import & setup' : tab === 'dashboard' ? '2 · Dashboard' : tab === 'statistics' ? 'Statistics · why & what it means' : 'Analysis history'}
+          {['dashboard', 'genes', 'samples', 'setup', 'statistics', 'history'].map(tab => <button key={tab} aria-pressed={activeTab === tab} onClick={() => setActiveTab(tab)}>
+            {tab === 'setup' ? 'Expression setup' : tab === 'samples' ? 'Samples & design' : tab === 'genes' ? 'All genes' : tab === 'dashboard' ? 'Overview' : tab === 'statistics' ? 'Statistics' : 'History'}
           </button>)}
         </nav>
-        {selectedExperiment && <div hidden={activeTab !== 'dashboard'}>
-          <Dashboard key={selectedExperiment.id} experiment={selectedExperiment} versions={versions} currentResult={analysisResult}
-            referenceAssays={analysisConfig.referenceAssays} annotations={sampleInstances} onSaveAnnotations={saveAnnotations} onQuality={saveQuality} onPreview={previewQuality} onMappingDirty={setMappingDirty} onRebuild={rebuildAnalyses} draftDirty={draftDirty}
-            onSetup={() => setActiveTab('setup')} snapshot={historicalResult} onClearSnapshot={()=>setHistoricalResult(null)} onStatistics={result=>{setSelectedStatistics(result);setActiveTab('statistics')}} />
+        {selectedExperiment && detail?.id===activeExperimentId && <div hidden={activeTab !== 'dashboard'&&activeTab !== 'genes'}>
+          <Dashboard allGenes={activeTab==='genes'} key={selectedExperiment.id} experiment={selectedExperiment} versions={versions} currentResult={analysisResult}
+            referenceAssays={analysisConfig.referenceAssays} annotations={sampleInstances} onQuality={saveQuality} onPreview={previewQuality} onRebuild={rebuildAnalyses} draftDirty={draftDirty}
+            onSetup={() => setActiveTab('setup')} onSamples={()=>setActiveTab('samples')} snapshot={historicalResult} onClearSnapshot={()=>setHistoricalResult(null)} onStatistics={result=>{setSelectedStatistics(result);setActiveTab('statistics')}} />
         </div>}
-        {activeTab === 'statistics' && <><h3>Statistics · {(selectedStatistics??analysisResult)?.target_assay??'select an analysis'} · {runs.find(r=>r.id===(selectedStatistics??analysisResult)?.run_id)?.name??''}</h3><StatisticsResults result={(selectedStatistics??analysisResult)?.statistics} /><StatisticsExplanation /></>}
+        {selectedExperiment&&detail?.id===activeExperimentId&&<section hidden={activeTab!=='samples'} className="samples-workspace"><h3>Samples &amp; experimental design</h3><p>Review suggested assignments against your protocol before calculating expression.</p><DesignPanel value={selectedExperiment.experiment_design} onSave={saveDesign} draft={designDraft} onDraftChange={setDesignDraft}/><SampleMappingPanel key={selectedExperiment.id} experiment={selectedExperiment} annotations={sampleInstances} onSave={saveAnnotations} onDirty={setMappingDirty}/><button className="quiet-button" onClick={()=>setActiveTab('setup')}>Continue to expression setup →</button></section>}
+        {activeTab === 'statistics' && <><h3>Statistics · {(selectedStatistics??analysisResult)?.target_assay??'select an analysis'} · {runs.find(r=>r.id===(selectedStatistics??analysisResult)?.run_id)?.name??''}</h3><StatisticsResults result={(selectedStatistics??analysisResult)?.statistics} /><StatisticsExplanation />{(selectedStatistics??analysisResult)&&<DistributionDiagnostics analyses={[(selectedStatistics??analysisResult)!]} currentRevision={selectedExperiment?.context_revision??0} runName={id=>runs.find(run=>run.id===id)?.name??id}/>}</>}
         {activeTab === 'history' && <section className="panel"><h3>Saved analysis versions</h3><p>Each calculation is retained. Open a snapshot to inspect its results; setup controls show the current configuration for that run. Recalculate to create a new version.</p>
+          {analysisResult&&!historicalResult&&<p><a className="button-link" href={`${API_ROOT}${exportPath}/export.csv`}>Latest saved analysis CSV · {analysisResult.target_assay}</a></p>}
           {versions.length === 0 && <p>No saved analyses yet.</p>}
           {versions.map(v => <div key={v.id}><button className="history-entry" onClick={() => { selectRun(v.result.run_id); setHistoricalResult(v.result); setActiveTab('dashboard') }}>
             {new Date(v.created_at).toLocaleString()} · {v.result.target_assay} · {v.result.run_id} · method {v.result.statistics?.method ?? 'legacy'}
@@ -490,7 +506,7 @@ function App() {
         {selectedExperiment && activeTab === 'setup' && (
           <>
             <section className="panel run-overview">
-              <div className="analysis-header"><h3>Detected instrument runs</h3><button className="quiet-button" onClick={()=>setActiveTab('dashboard')}>View all Ct plots →</button></div>
+              <div className="analysis-header"><h3>Detected instrument runs</h3><button className="quiet-button" onClick={()=>setActiveTab('dashboard')}>View raw results →</button></div>
               <p>{selectedExperiment.parsed_summary?.record_count ?? 0} measurements across {runs.length} run(s). Select a run to inspect its raw data and setup. Run boundaries are preserved; sharing a workbook does not mean samples belong to one biological experiment.</p>
               <div className="condition-cards">{runs.map(run => <button key={run.id} aria-pressed={selectedRunId === run.id} className="run-card" onClick={() => selectRun(run.id)}>
                 <strong>{run.name}</strong><span>{run.sheet} · header row {run.header_row}</span><span>{run.record_count} measurements · {run.plate_size ?? 'Unknown'}-well plate</span><span>{selectedRunId === run.id ? 'Currently viewing' : 'View this run'}</span>
@@ -501,7 +517,7 @@ function App() {
                 <h3>Set up processing</h3>
                 <span>{selectedExperiment.parsed_summary?.record_count ?? 0} raw measurements imported</span>
               </div>
-              <DesignPanel value={selectedExperiment.experiment_design} onSave={saveDesign} draft={designDraft} onDraftChange={setDesignDraft}/>
+              <p className="method-note">Sample identities and study design: <button className="text-button" onClick={()=>setActiveTab('samples')}>Review samples &amp; design →</button></p>
               <label className="confirmation"><input type="checkbox" checked={analyseAll} onChange={event => setAnalyseAll(event.target.checked)} />Analyse all target assays in this run</label>
               <div className="analysis-controls">
                 <label>
@@ -524,7 +540,7 @@ function App() {
                       setSetupEdited(true)
                       setAnalysisConfig(current => ({ ...current, targetAssay: target, referenceAssays: current.referenceAssays.filter(a => a !== target) }))
                       setAnalysisError('')
-                      setStatus('Setup updated. Review the selection summary below, then create the dashboard.')
+                      setStatus('Setup updated. Review the selection summary below, then calculate expression.')
                     }}
                   >
                     <option value="">{analyseAll ? 'All non-reference assays' : 'Select target'}</option>
@@ -540,7 +556,7 @@ function App() {
                       setSetupEdited(true)
                       setAnalysisConfig(current => ({...current, referenceAssays: checked ? [...current.referenceAssays, assay] : current.referenceAssays.filter(a => a !== assay)}))
                       setAnalysisError('')
-                      setStatus('Setup updated. Review the selection summary below, then create the dashboard.')
+                      setStatus('Setup updated. Review the selection summary below, then calculate expression.')
                     }} /><span>{assay}</span>
                   </label>)}</div>
                 </fieldset>
@@ -553,7 +569,7 @@ function App() {
                       setSetupEdited(true)
                       setBaselineSamples(current => checked ? [...current, sample] : current.filter(s => s !== sample))
                       setAnalysisError('')
-                      setStatus('Setup updated. Review the selection summary below, then create the dashboard.')
+                      setStatus('Setup updated. Review the selection summary below, then calculate expression.')
                     }} /><span>{sample}{technicalSamples.includes(sample) ? ' (technical control)' : Object.hasOwn(excludedSamples, sample) ? ' (excluded)' : ''}</span>
                   </label>)}</div>
                 </fieldset>
@@ -563,17 +579,17 @@ function App() {
                 sample and assay; separate runs are never combined automatically.
               </p>
               <div className={`setup-summary ${setupIssues.length ? 'needs-input' : 'ready'}`} aria-live="polite">
-                <h4>{setupIssues.length ? 'Setup needs attention' : 'Ready to create dashboard'}</h4>
+                <h4>{setupIssues.length ? 'Setup needs attention' : 'Ready to calculate expression'}</h4>
                 {analysisError && <p className="analysis-error" role="alert">{analysisError}</p>}
                 <p>Target: <strong>{analyseAll ? `All ${assayOptions.filter(a => !analysisConfig.referenceAssays.includes(a)).length} target assays` : analysisConfig.targetAssay || 'not selected'}</strong> · References: <strong>{analysisConfig.referenceAssays.join(', ') || 'none'}</strong> · Baseline: <strong>{baselineSamples.length} biological sample(s)</strong></p>
                 {baselineSamples.length > 0 && <p>Baseline samples: {baselineSamples.join('; ')}</p>}
                 {setupIssues.length > 0 && <ul>{setupIssues.map(issue => <li key={issue}>{issue}</li>)}</ul>}
-                <button className="run-button" disabled={busy || setupIssues.length > 0} onClick={runAnalysis}>{busy ? 'Calculating…' : 'Create dashboard and save analysis'}</button>
+                <button className="run-button" disabled={busy || setupIssues.length > 0} onClick={runAnalysis}>{busy ? 'Calculating…' : 'Calculate expression'}</button>
               </div>
               {draftDirty&&<p><button className="quiet-button" onClick={()=>configureRun(selectedExperiment,selectedRunId,versions,true)}>Restore saved setup</button> Unsaved setup edits are not applied by Rebuild saved runs.</p>}
               <p className="technical-control-note">Technical controls: {technicalSamples.join(', ') || 'none detected'}. These remain in raw data and are excluded from expression calculations and statistics. Review or override roles below.</p>
               <details className="setup-details"><summary>Review suggested biological conditions and exclusions</summary>
-                <p>Condition labels come from the saved run-specific mapping. <button className="text-button" onClick={()=>{setActiveTab('dashboard');setTimeout(()=>{const mapping=document.querySelector<HTMLDetailsElement>('.sample-mapping');if(mapping){mapping.open=true;mapping.scrollIntoView({behavior:'smooth'})}},0)}}>Edit sample and time mapping</button></p>
+                <p>Condition labels come from the saved run-specific mapping. <button className="text-button" onClick={()=>{setActiveTab('samples')}}>Edit sample and time mapping</button></p>
                 <p>Suffixes such as .1 and .2 suggest biological samples within a condition. Review every label. This does not establish pairing. Leave controls such as H₂O ungrouped.</p>
                 <div className="results-table-wrap"><table><thead><tr><th>Sample</th><th>Role</th><th>Condition</th><th>Exclude from this analysis</th></tr></thead><tbody>
                   {sampleOptions.map(sample => <tr key={sample}><td>{sample}</td><td><select aria-label={`Role for ${sample}`} value={technicalSamples.includes(sample) ? 'technical' : 'biological'} onChange={event => {
@@ -600,7 +616,7 @@ function App() {
                 I confirm these are independent biological groups (no pairing, repeated samples or unmodelled blocks), and a normal-population mean comparison is justified by the protocol or prior evidence. Small-n tests are exploratory.
               </label>}
               <p><button onClick={() => setActiveTab('statistics')}>Why these statistics? Read the explanation</button></p>
-              <button className="run-button" disabled={busy || setupIssues.length > 0} onClick={runAnalysis}>{busy ? 'Calculating…' : 'Create dashboard and save analysis'}</button>
+              <button className="run-button" disabled={busy || setupIssues.length > 0} onClick={runAnalysis}>{busy ? 'Calculating…' : 'Calculate expression'}</button>
             </section>
 
             {selectedRun && <section className="panel">
@@ -673,6 +689,7 @@ function App() {
             ) : null}
           </>
         )}
+        </div>
       </main>
     </div>
   )

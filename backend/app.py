@@ -113,6 +113,8 @@ init_db()
 
 
 class SampleAnnotation(BaseModel):
+    cell_line: str | None = None
+    confluency: str | None = None
     condition: str
     series: str
     timepoint: float | None = Field(default=None, allow_inf_nan=False)
@@ -243,6 +245,45 @@ def health() -> dict[str, str]:
     return {"status": "ok", "analysis_contract": "5", "app": "qPCR Analysis Workbench"}
 
 
+def library_summary(experiment: sqlite3.Row, conn: sqlite3.Connection) -> dict[str, Any]:
+    """Compact library fields, derived from preserved records and current review context."""
+    records = read_json_column(experiment["raw_records"]) or []
+    metadata = read_json_column(experiment["metadata"]) or {}
+    annotations = instances(records, metadata.get("sample_metadata", {}), metadata.get("sample_instances", {}))
+    quality = assess_quality(records, metadata.get("measurement_exclusions", {}), metadata.get("qc_decisions", {}), metadata.get("spread_threshold", 1.0), {k: v.get("role") for k, v in annotations.items()})
+    latest_profiles: dict[str, str] = {}
+    selected: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in conn.execute("SELECT result_json FROM analysis_versions WHERE experiment_id = ? ORDER BY created_at DESC", (experiment["id"],)):
+        result = read_json_column(row["result_json"])
+        run = result.get("run_id", "")
+        profile = result.get("profile_id") or canonical_hash([result.get("reference_assays"), result.get("baseline_samples", result.get("baseline_sample")), result.get("sample_groups"), result.get("excluded_samples"), result.get("excluded_measurements")])
+        latest_profiles.setdefault(run, profile)
+        if profile == latest_profiles[run]:
+            selected.setdefault((run, result.get("target_assay", "")), result)
+    legacy = read_json_column(experiment["analysis_result"])
+    if not selected and legacy:
+        selected[(legacy.get("run_id", ""), legacy.get("target_assay", ""))] = legacy
+    outdated = sum(result.get("context_revision") != metadata.get("context_revision", 0) for result in selected.values())
+    incomplete = False
+    for run in (read_json_column(experiment["parsed_summary"]) or {}).get("runs", []):
+        saved = next((r for (run_id, _), r in selected.items() if run_id == run["id"]), None)
+        if saved is None:
+            incomplete = True
+            continue
+        targets = {r["assay"] for r in records if r.get("run_id") == run["id"]} - set(saved.get("reference_assays", []))
+        incomplete |= any((run["id"], assay) not in selected for assay in targets)
+    return {
+        "assay_count": len({r["assay"] for r in records}),
+        "biological_sample_count": sum(a.get("role") != "technical_control" for a in annotations.values()),
+        "unresolved_count": quality["unresolved_count"],
+        "reviewed_count": quality["reviewed_count"],
+        "design_confirmed": bool(metadata.get("experiment_design", {}).get("confirmed")),
+        "analysis_state": "needs_recalculation" if outdated else "partial" if selected and incomplete else "saved" if selected else "not_calculated",
+        "saved_result_count": len(selected),
+        "outdated_result_count": outdated,
+    }
+
+
 @app.get("/api/projects")
 def list_projects() -> list[dict[str, Any]]:
     with get_db() as conn:
@@ -252,7 +293,7 @@ def list_projects() -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for project in projects:
             experiments = conn.execute(
-                "SELECT id, name, status, original_filename, created_at, parsed_summary, analysis_result FROM experiments WHERE project_id = ? ORDER BY created_at DESC",
+                "SELECT id, name, status, original_filename, created_at, parsed_summary, analysis_result, raw_records, metadata FROM experiments WHERE project_id = ? ORDER BY created_at DESC",
                 (project["id"],),
             ).fetchall()
             rows.append(
@@ -268,6 +309,7 @@ def list_projects() -> list[dict[str, Any]]:
                             "status": experiment["status"],
                             "original_filename": experiment["original_filename"],
                             "created_at": experiment["created_at"],
+                            "library_summary": library_summary(experiment, conn),
                             "parsed_summary": read_json_column(experiment["parsed_summary"]),
                             "analysis_result": read_json_column(experiment["analysis_result"]),
                         }

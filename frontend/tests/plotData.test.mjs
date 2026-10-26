@@ -30,3 +30,9 @@ test('run-scoped sample identity permits the same label at different days',()=>{
   assert.equal(moduleExports.sampleAnnotation(mappings,'run1','10.1').timepoint,0)
   assert.equal(moduleExports.sampleAnnotation(mappings,'run2','10.1').timepoint,3)
 })
+test('biological filters use conservative factors and respect explicit corrections',()=>{
+ const m={condition:'LAD081_HDFn_confluency_100% day 21',series:'LAD081_HDFn_confluency_100%'}
+ assert.deepEqual(moduleExports.sampleFactors(m),{cell_line:'HDFn',confluency:'100%'})
+ assert.deepEqual(moduleExports.sampleFactors({...m,cell_line:'Different cells',confluency:''}),{cell_line:'Different cells',confluency:''})
+ assert.deepEqual(moduleExports.sampleFactors({condition:'drug 100%',series:'drug'}),{cell_line:'',confluency:''})
+})

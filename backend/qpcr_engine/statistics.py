@@ -17,7 +17,10 @@ def normality(values: list[float]) -> dict[str, Any]:
     if len(values) > 5000:
         return {"status": "not_assessable", "p_value": None, "reason": "Shapiro–Wilk p-values are not supported here above 5000 observations."}
     result = stats.shapiro(values)
-    return {"status": "assessed", "p_value": float(result.pvalue), "reason": "A large p-value does not establish normality; small samples have limited diagnostic power."}
+    (theoretical, observed), (slope, intercept, correlation) = stats.probplot(values, dist="norm", fit=True)
+    probability_plot = {"theoretical": theoretical.tolist(), "observed": observed.tolist(),
+                        "slope": float(slope), "intercept": float(intercept), "r_squared": float(correlation**2)}
+    return {"status": "assessed", "probability_plot": probability_plot, "p_value": float(result.pvalue), "reason": "A large p-value does not establish normality; small samples have limited diagnostic power."}
 
 
 def holm(p_values: list[float]) -> list[float]:

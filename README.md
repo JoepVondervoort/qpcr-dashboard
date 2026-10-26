@@ -128,8 +128,12 @@ Unsupported layouts return an error rather than saving an empty experiment.
 
 For development, restart the backend after Python changes, or start it with
 `python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload`.
-The frontend uses `http://localhost:8000` by default; `VITE_API_ROOT` can override
-that address when starting Vite or building. Optional `QPCR_DATA_DIR` and
+The browser uses the frontend address for API requests. Vite forwards `/api` and
+`/openapi.json` to `http://127.0.0.1:8000`, avoiding browser cross-origin and
+Windows/WSL localhost resolution differences. Set `QPCR_BACKEND_URL` when starting
+Vite to forward to a different backend. `VITE_API_ROOT` remains an explicit
+override for deployments that serve the API at a separate address. Static hosting
+without Vite must also forward those routes or set that override. Optional `QPCR_DATA_DIR` and
 `QPCR_UPLOAD_DIR` settings relocate backend storage.
 
 An optional end-to-end browser regression uses synthetic data by default and
@@ -238,7 +242,7 @@ currently support descriptive output only. Reference-validation and assay-
 efficiency notes are saved with analyses; Ct exports do not validate them.
 
 Figure presets export 85 mm or 180 mm SVGs with a minimum 8 pt figure font size.
-Closely spaced times use a regular time axis with biological n in the legend.
+Automatic time spacing compacts sparse measured times; proportional elapsed time remains selectable. Biological n stays on the axis or, for dense proportional axes, in the legend.
 Each figure also downloads the actual scoped data as CSV and methods/provenance
 as JSON. Empty figures disable SVG export. Printed panels retain physical size,
 quality/stale labels and readable text. The responsive workspace collapses on
@@ -258,3 +262,91 @@ modifying the user's projects. It checks QC/filter behavior, preview immutabilit
 review notes, mapping identity, stale/rebuild state, design gating, exports and
 mobile overflow. Optional live-data reviews should remain read-only unless the
 researcher explicitly requests recalculation or review changes.
+
+## Experiment library and results overview
+
+The home screen lists uploads across projects. Search by experiment, original
+filename, project or instrument run; filter by project, QC concerns or incomplete
+expression analysis, and sort by upload date or name. Dates are explicitly upload
+dates: the importer does not infer an instrument run date from a filename.
+Library sample counts are distinct biological sample instances within each run,
+not wells or inferred independent experimental units. QC and analysis badges are
+computed from the current saved context; partially calculated and outdated
+analyses are identified separately.
+
+**Upload results** opens a focused drawer. Importing immediately opens a raw Ct
+heatmap and assay inspector, before normalization setup. A repeated filename is
+identified before import; importing it still creates a separate experiment.
+**Expression setup** contains reference/baseline selection and calculation.
+**Samples & design** contains the experimental design and editable sample
+assignments, with search, run filters and bulk edits to selected rows. Bulk edits
+remain drafts until **Save sample mapping**. Existing saved expression results
+require recalculation after mapping changes.
+
+The overview switches between raw Ct and normalized expression. Raw heatmap cells
+average technical wells within each sample, then weight samples equally. Omitted
+wells and saved well/sample exclusions do not enter those means. Cells show
+biological sample counts. Clicking a cell retains its run, series and time in the
+inspector. QC has filters for unresolved/reviewed concerns, control signals or
+replicate spread, and sample/assay search. Mobile layouts use experiment cards
+and collapsible result filters; figure/export settings follow the overview.
+
+## All-gene dashboard, time spacing and publication images
+
+**All genes** is a separate tab with a 2–4 column panel grid. Switch between
+normalized expression and raw Ct without leaving the dashboard. Confluency and
+cell-line buttons support individual/multiple selections and **All**. Conservative
+name-based suggestions recognize labelled confluency and the existing HDFn,
+HeLa and AF22 naming conventions; other cell lines appear as **Not annotated**
+until assigned. Edit or bulk-assign both fields in **Samples & design**. These
+filters select observations; saved normalization is not recalculated by a filter.
+
+Time-axis spacing defaults to **Automatic**: bars use evenly spaced measured
+times, and time courses compact when the largest interval is at least 2.5 times
+the smallest. Day labels retain their actual values. **Measured times** and
+**Proportional elapsed time** overrides are available. Figures disclose equal
+spacing and exports record the chosen spacing. The baseline explanation is below
+the plot, outside the bars and points.
+
+Each figure downloads editable **Vector SVG**, a **600 dpi PNG** (including PNG
+physical-resolution metadata), plotted data CSV and methods JSON. PNG dimensions
+are calculated from the 85 mm / 180 mm publication width; SVG remains vector at
+any resolution. Dashboard panels use 85 mm exports. On-screen compact cards trim
+repeated figure notes; those notes remain in SVG, PNG and printed/PDF output.
+**Export dashboard PDF** opens the browser print dialog for vector PDF output.
+Provisional/stale status and biological n remain visible in publication exports.
+
+## Figure customization, pinned genes and saved statistical evidence
+
+Open **Customize figures** to select a palette or set individual series colors.
+Colors apply consistently to points, means, bars, legends and SVG/PNG/PDF exports;
+methods JSON and SVG metadata include the actual colors. In **All genes**, drag a
+panel's **Move** handle onto another panel to reorder. Arrow buttons and arrow
+keys on the handle provide keyboard/touch alternatives. **Undo reorder** restores
+the preceding order, and **Reset plot order** restores alphabetical order. Pin
+frequent genes, use **Pinned genes only**, or search assay names. These preferences
+are stored per experiment in this browser; they do not modify source data,
+analysis settings, revisions or saved result versions.
+
+QC review and Statistics include **Biological distributions & normality**. Dot
+plots show biological-sample ΔCt values; normal probability plots use SciPy's
+`probplot` against theoretical normal quantiles with a fitted reference line.
+Shapiro–Wilk remains a diagnostic, not a rule for selecting an inferential test.
+Groups with fewer than three observations or constant values show an explicit
+not-assessable state. Older snapshots without probability coordinates retain
+their saved data and request a new calculation to add the plot. Diagnostic data
+can be downloaded as JSON, and probability plots as self-contained vector SVGs.
+Biological condition/time filters do not change the saved diagnostic groups.
+Implementation references: [SciPy probability plots](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.probplot.html)
+and [Shapiro–Wilk](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.shapiro.html).
+
+Expression plots show `*` for a current, fully displayed, single-location
+condition whose supported saved independent-group Welch comparison has a
+Holm-adjusted p-value below its recorded alpha. Exact adjusted p-values, biological
+n, baseline n and saved reasons appear under **Statistics** beneath each figure;
+marker notes and full provenance travel with exports. Raw p-values and effect
+threshold crossings never generate markers. Descriptive/unconfirmed analyses,
+filtered subsets, multi-location comparisons and historical results have explicit
+scope/status messages and no current significance marker. Filters never rerun a
+test or change its comparison family. Statistical annotations can be hidden from
+plots without hiding the underlying saved results.

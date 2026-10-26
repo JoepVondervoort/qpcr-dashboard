@@ -125,3 +125,42 @@ def test_rebuild_preserves_custom_groups_until_mapping_changes(tmp_path,monkeypa
     api.analyze_experiment(project['id'],experiment['id'],request(api,experiment,sample_groups=groups))
     result=api.rebuild_saved_analyses(project['id'],experiment['id'])
     assert all(r['sample_groups']['drug.1']=='Custom treatment label' for r in result['results'])
+
+
+def test_library_tracks_current_review_and_analysis_context(tmp_path, monkeypatch):
+    api, project, experiment = prepare_batch_experiment(tmp_path, monkeypatch)
+    def summary():
+        return api.list_projects()[0]['experiments'][0]['library_summary']
+    detail = api.get_experiment(project['id'], experiment['id'])
+    original_records = detail['raw_records']
+    first = summary()
+    assert first['analysis_state'] == 'not_calculated'
+    assert first['assay_count'] == len({r['assay'] for r in original_records})
+    assert first['biological_sample_count'] == sum(a['role'] != 'technical_control' for a in detail['sample_instances'].values())
+    assert first['unresolved_count'] == detail['quality']['unresolved_count']
+    api.analyze_experiment(project['id'], experiment['id'], request(api, experiment))
+    assert summary()['analysis_state'] == 'partial'
+    sample_id = next(k for k, a in detail['sample_instances'].items() if a['role'] == 'biological')
+    api.update_sample_instances(project['id'], experiment['id'], {sample_id:api.SampleAnnotation(condition='updated condition', series='updated series')})
+    assert summary()['analysis_state'] == 'needs_recalculation'
+    assert summary()['outdated_result_count'] == 1
+    api.rebuild_saved_analyses(project['id'], experiment['id'])
+    # The fixture has an all-undetermined target; rebuilding cannot make it available.
+    assert summary()['analysis_state'] == 'partial'
+    assert summary()['outdated_result_count'] == 0
+    assert summary()['saved_result_count'] == 2
+    assert api.get_experiment(project['id'], experiment['id'])['raw_records'] == original_records
+
+
+def test_normal_probability_plot_uses_only_observed_biological_delta_ct():
+    from backend.qpcr_engine.statistics import normality
+    from scipy import stats
+    values = [2.3, 1.1, 1.8, 1.5, 2.1, 1.3]
+    diagnostic = normality(values)
+    expected, fit = stats.probplot(values, dist='norm', fit=True)
+    assert diagnostic['status'] == 'assessed'
+    assert diagnostic['probability_plot']['observed'] == sorted(values)
+    assert diagnostic['probability_plot']['theoretical'] == pytest.approx(expected[0])
+    assert diagnostic['probability_plot']['slope'] == pytest.approx(fit[0])
+    assert 'probability_plot' not in normality([1, 2])
+    assert 'probability_plot' not in normality([2, 2, 2])

@@ -22,6 +22,8 @@ def instances(records, legacy=None, overrides=None):
         name = str(row['sample']); key = sample_instance_id(str(row.get('run_id','')), name)
         value = {**infer_sample_metadata(name), **(legacy or {}).get(name, {}), **(overrides or {}).get(key, {})}
         value.setdefault('biological_unit_id', '')
+        value.setdefault('cell_line', None)
+        value.setdefault('confluency', None)
         if value.get('role') is None: value['role'] = 'technical_control' if is_technical_control(name) else 'biological'
         result[key] = value
     return result

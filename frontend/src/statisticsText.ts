@@ -1,5 +1,8 @@
 const labels:Record<string,string>={assessed:'Assessed',not_assessable:'Not assessable'}
 
+/** p-values keep four significant figures so a value just above alpha never displays as alpha itself. */
+export const formatP=(value:number|null|undefined)=>value==null?'—':value<.001?'< 0.001':String(Number(value.toPrecision(4)))
+
 export function normalityLabel(status:string):string {
  if(labels[status])return labels[status]
  const words=status.replaceAll('_',' ').trim()

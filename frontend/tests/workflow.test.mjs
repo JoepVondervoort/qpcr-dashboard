@@ -4,9 +4,9 @@ import {loadTs as load} from './loadTs.mjs'
 const {groupQualityFlags,flagGroupTitle}=await load('qcGroups')
 const {groupAnalysisVersions}=await load('historyGroups')
 const {dashboardStatus}=await load('status')
-const {normalityLabel,condenseWarnings}=await load('statisticsText')
+const {normalityLabel,condenseWarnings,formatP}=await load('statisticsText')
 const {sharedPrefix,withoutPrefix}=await load('sampleNames')
-const {topChanges,geneCatalog,geneMatrix}=await load('libraryResults')
+const {topChanges,geneCatalog,geneMatrix,extremeChanges,geneFingerprint}=await load('libraryResults')
 
 const flag=(assay,sample,run='r1',kind='control_signal',status='needs_review')=>({id:`${kind}:${run}:${sample}:${assay}`,kind,run_id:run,sample,assay,status,measurements:[]})
 
@@ -81,4 +81,24 @@ test('two conditions at the same time in one series are both kept',()=>{
  const matrix=geneMatrix(rows)
  assert.equal(matrix.lines.length,2)
  assert.deepEqual(matrix.lines.map(line=>line.cells['day:3'].condition).sort(),['siCtrl d3','siX d3'])
+})
+
+test('the experiment summary names the largest increase and decrease separately',()=>{
+ const {up,down}=extremeChanges([geneRow('MAP2','d0',1,true),geneRow('MAP2','d21',177),geneRow('COL1A1','d21',0.11),geneRow('TUBB3','d21',1.2),geneRow('X','d21',0.9)])
+ assert.equal(up.assay,'MAP2');assert.equal(down.assay,'COL1A1')
+ assert.deepEqual(extremeChanges([geneRow('A','d21',2)]),{up:{assay:'A',fold_change:2,condition:'d21',run_name:'Plate_1',out_of_date:false},down:undefined})
+})
+
+test('the largest increase is found across all conditions, not only each gene\'s strongest change',()=>{
+ const {up,down}=extremeChanges([geneRow('A','d21',4),geneRow('A','d28',0.125),geneRow('B','d21',2)])
+ assert.equal(up.assay,'A');assert.equal(up.fold_change,4);assert.equal(down.fold_change,0.125)
+})
+
+test('the library fingerprint has one strongest change per gene in name order',()=>{
+ const strip=geneFingerprint([geneRow('TUBB3','d21',1.2),geneRow('ACTA1','d21',0.2),geneRow('ACTA1','d28',0.3),geneRow('MAP2','d0',1,true)])
+ assert.deepEqual(strip.map(cell=>[cell.assay,cell.fold_change]),[['ACTA1',0.2],['TUBB3',1.2]])
+})
+
+test('p-values never round onto alpha',()=>{
+ assert.equal(formatP(0.04996),'0.04996');assert.equal(formatP(0.2),'0.2');assert.equal(formatP(0.0004),'< 0.001');assert.equal(formatP(null),'—')
 })

@@ -21,6 +21,16 @@ export function topChanges(results:GeneResult[],count=3):GeneChange[] {
   .map(row=>({assay:row.assay,fold_change:row.fold_change!,condition:row.condition,run_name:row.run_name,out_of_date:row.out_of_date}))
 }
 
+/** The largest increase and the largest decrease among non-baseline results. */
+export function extremeChanges(results:GeneResult[]):{up?:GeneChange;down?:GeneChange} {
+ const rows=results.filter(row=>!row.is_baseline&&row.fold_change!=null&&row.fold_change>0)
+ const pick=(direction:1|-1)=>{const row=rows.filter(r=>direction*Math.log2(r.fold_change!)>0).sort((a,b)=>direction*(b.fold_change!-a.fold_change!))[0];return row&&{assay:row.assay,fold_change:row.fold_change!,condition:row.condition,run_name:row.run_name,out_of_date:row.out_of_date}}
+ return {up:pick(1),down:pick(-1)}
+}
+
+/** One strongest change per gene in name order: a compact fingerprint of an experiment. */
+export function geneFingerprint(results:GeneResult[]):GeneChange[] {return topChanges(results,Infinity).sort((a,b)=>byName(a.assay,b.assay))}
+
 /** Every gene with saved expression results, across all experiments in the workspace. */
 export function geneCatalog(projects:Project[]):GeneEntry[] {
  const rows:GeneRow[]=projects.flatMap(project=>project.experiments.flatMap(experiment=>(experiment.library_summary?.gene_results??[]).map(row=>({...row,project_id:project.id,project_name:project.name,experiment_id:experiment.id,experiment_name:experiment.name}))))

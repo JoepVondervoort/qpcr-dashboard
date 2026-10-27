@@ -432,3 +432,41 @@ this experiment in this browser and do not create scientific analysis versions.
   for any assay, and marks technical-control signals, open QC findings,
   undetermined and omitted wells. The raw measurement table and import warnings
   live here.
+
+## Figure design and dashboard styling
+
+- **Marks.** Each condition shows a filled marker for its summary (geometric mean
+  on a log₂ axis, otherwise the mean) with whiskers on the same position, and
+  lighter circles for the biological samples around it. Raw Ct figures add the
+  technical wells as faint dots. Bars from 1× sit side by side per series and
+  never overlap.
+- **Axes.** Log₂ ticks read as fold changes (⅛×, ¼×, ½×, 1×, 2×, …). The range
+  follows the data with a small margin, always includes 1× and labels at least
+  two powers of two. Time is drawn to scale by default (tick labels are days or
+  hours); equal spacing is used only when neighbouring time points would
+  collide, for bars, or when chosen in **Settings**. The y title names the
+  baseline, for example "Fold change vs Day 0".
+- **Legends.** Time courses with up to four series and a constant n are labelled
+  at the line ends and state n once; otherwise a legend sits above the plot.
+- **Grids.** In **All genes** and the **Figure builder / report**, panels show
+  data only. One legend and key above the grid give the series, axes, summary
+  statistic and (in the report) references and result status. Genes without any
+  saved result are listed under the grid. **Same y-axis for all genes** shares
+  one range. Every panel's **Export** still produces the complete figure with
+  title, legend and notes.
+- **Inspector.** The figure sits next to a readout of the plotted numbers per
+  series and time point (fold change ×/÷ SD or Ct ± SD, and n), with the
+  references, baseline, result status and open QC findings for that gene.
+- **Figure style** (Figure size, style & export): **Screen** uses light
+  gridlines and open axes; **Journal** uses Arial, closed thin axes, outward
+  ticks and no gridlines. Both keep all text at 8 pt or more at 85 mm and apply
+  to the screen and every export.
+- **Heatmap.** A tight grid with solid colors and two significant figures
+  (exact values in the tooltip). n appears once per column; cells mark only a
+  different n. Raw Ct uses darker = lower Ct, matching the plate map, with the
+  scale fitted to the visible values.
+- **Header.** Experiments can be renamed (**Rename**; the uploaded file name is
+  kept as provenance and the rename is audited). A summary line lists assays,
+  runs, samples, the largest increase and decrease, and open QC findings.
+- The interface uses the bundled Inter typeface (`@fontsource-variable/inter`),
+  so it no longer depends on fonts installed on the computer.

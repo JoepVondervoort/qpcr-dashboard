@@ -1,7 +1,7 @@
 import type {Observation} from './plotData'
 import {mean,sampleSD} from './plotData'
 import type {TimeSpacing} from './figureLayout'
-import {foldSummary,log2TickCount,type YScale} from './logScale'
+import {foldSummary,log2Domain,log2TickCount,type YScale} from './logScale'
 
 export type ColorBy='series'|'condition'|'confluency'|'cell_line'|'run'|'sample'
 /** yScale applies to expression plots only; Ct axes are always linear. */
@@ -54,13 +54,13 @@ export function colorGroup(point:Observation,by:ColorBy):ColorGroup {
 export function colorGroups(points:Observation[],by:ColorBy):ColorGroup[] {return [...new Map(points.map(point=>{const group=colorGroup(point,by);return [group.key,group]})).values()].sort((a,b)=>a.label.localeCompare(b.label,undefined,{numeric:true}))}
 export const barKey=(series:string,category:string)=>JSON.stringify([series,category])
 export const sampleColorKey=(point:Observation)=>JSON.stringify([point.run,point.sample])
-export function automaticYRange(points:Observation[],kind:'ct'|'expression',scale:YScale='linear'):[number,number] {
- const groups=new Map<string,number[]>();const values:number[]=[]
+export function automaticYRange(points:Observation[],kind:'ct'|'expression',scale:YScale='linear',include:number[]=[]):[number,number] {
+ const groups=new Map<string,number[]>();const values:number[]=[...include]
  for(const point of points){values.push(...point.values,...(point.omitted??[]));const avg=mean(point.values);if(avg!=null){const key=JSON.stringify([point.data?.[0]?.assay,point.series,point.category]);groups.set(key,[...(groups.get(key)??[]),avg])}}
  if(kind==='expression'&&scale==='log2'){
   for(const group of groups.values()){const summary=foldSummary(group,'log2');if(summary)values.push(summary.lower,summary.upper)}
-  const positive=values.filter(value=>Number.isFinite(value)&&value>0)
-  return [2**Math.min(-1,Math.floor(Math.log2(Math.min(...positive)))),2**Math.max(1,Math.ceil(Math.log2(Math.max(...positive))))]
+  const [low,high]=log2Domain(values)
+  return [2**low,2**high]
  }
  for(const group of groups.values()){const avg=mean(group)!;const sd=sampleSD(group)??0;values.push(avg-sd,avg+sd)}
  const finite=values.filter(Number.isFinite)

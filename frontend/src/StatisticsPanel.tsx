@@ -1,4 +1,6 @@
-import { condenseWarnings, normalityLabel } from './statisticsText'
+import { condenseWarnings, formatP, normalityLabel } from './statisticsText'
+import { sharedPrefix, withoutPrefix } from './sampleNames'
+import { conditionDots } from './statisticsDots'
 
 export type Diagnostic ={ probability_plot?:{theoretical:number[];observed:number[];slope:number;intercept:number;r_squared:number}; status: string; p_value: number | null; reason: string }
 export type GroupResult = {
@@ -15,8 +17,19 @@ export type StatisticalResult = {
     p_value: number | null; adjusted_p_value: number | null; reason: string
     delta_ct_difference?: number; delta_ct_ci?: number[] }[]
 }
-const number = (value: number | null | undefined) => value == null ? '—' : value.toPrecision(4)
-const pValue = (value: number | null | undefined) => value == null ? '' : `; p = ${number(value)}`
+const number = (value: number | null | undefined) => value == null ? '—' : String(Number(value.toPrecision(3)))
+const DOT_WIDTH = 240, DOT_HEIGHT = 26
+
+/** Biological samples on a log2 axis shared by every card, with 1× marked. */
+function ConditionDots({ values, domain, label }: { values: number[]; domain: [number, number]; label: string }) {
+  const x = (log2: number) => 8 + (log2 - domain[0]) / (domain[1] - domain[0]) * (DOT_WIDTH - 16)
+  return <svg className="condition-dots" viewBox={`0 0 ${DOT_WIDTH} ${DOT_HEIGHT}`} role="img" aria-label={`${label}: ${values.map(v => `${Number((2 ** v).toPrecision(3))}×`).join(', ') || 'no samples'}`}>
+    <line x1="8" x2={DOT_WIDTH - 8} y1={DOT_HEIGHT / 2} y2={DOT_HEIGHT / 2} stroke="var(--rule)" />
+    <line x1={x(0)} x2={x(0)} y1="3" y2={DOT_HEIGHT - 3} stroke="#8d9ca1" strokeDasharray="3 2" />
+    {values.map((v, i) => <circle key={i} cx={x(v)} cy={DOT_HEIGHT / 2} r="4.5" fill="var(--accent)" fillOpacity=".55" stroke="var(--accent)" />)}
+  </svg>
+}
+const pValue = (value: number | null | undefined) => value == null ? '' : `; p = ${formatP(value)}`
 
 export function StatisticsResults({ result }: { result?: StatisticalResult }) {
   if (!result) return <p>Calculate a new analysis to see biological replicate summaries and diagnostics.</p>
@@ -27,12 +40,17 @@ export function StatisticsResults({ result }: { result?: StatisticalResult }) {
   const specific = (warning: string) => /fewer than three|departure from normality/i.test(warning)
   const cautions = condensed.filter(w => specific(w) && !(allSmall && /fewer than three/i.test(w)))
   const general = condensed.filter(w => !specific(w))
+  // Strip only whole underscore-separated labels, so a condition keeps its readable tail ("150% day 21").
+  const prefix = sharedPrefix([...result.groups.map(group => group.condition), ...result.comparisons.map(c => c.condition)]).replace(/[^_]*$/, '')
+  const name = (condition: string) => withoutPrefix(condition, prefix)
+  const dots = conditionDots(result.groups)
   return <section className="panel statistics-results">
     <h3>Biological replicate summary</h3>
-    <p>Arithmetic mean fold change ± sample SD per condition, as saved with the analysis (figures on a log₂ axis show the geometric mean). n counts biological samples; technical wells are averaged first.{allSmall ? ' Every condition has fewer than three biological samples, so normality cannot be assessed and any test would be exploratory.' : ''}</p>
+    <p>Arithmetic mean fold change ± sample SD per condition, as saved with the analysis (figures on a log₂ axis show the geometric mean).{dots ? ' Dots: biological samples on one shared log₂ scale; dashed line: 1×.' : ''} n counts biological samples; technical wells are averaged first.{allSmall ? ' Every condition has fewer than three biological samples, so normality cannot be assessed and any test would be exploratory.' : ''}{prefix ? ` Condition names omit the shared prefix “${prefix}”.` : ''}</p>
     <div className="condition-cards">{result.groups.map(group => <article className="condition-card" key={group.condition}>
-      <h4>{group.condition}</h4>
+      <h4 title={group.condition}>{name(group.condition)}</h4>
       <p className="condition-value"><strong>{number(group.fold_change_mean)}×</strong> ± {number(group.fold_change_sd)} SD</p>
+      {dots && <ConditionDots values={dots.values[group.condition] ?? []} domain={dots.domain} label={name(group.condition)} />}
       <p>n = {group.n}{group.incomplete_n ? ` · ${group.incomplete_n} incomplete` : ''}</p>
       <p>{group.is_baseline ? 'Baseline condition' : `${group.above_threshold ? 'Mean meets' : 'Mean below'} the effect threshold · ${group.replicates_above_threshold}/${group.n} samples meet it`}</p>
       {!allSmall && <p className="condition-normality">Normality: {normalityLabel(group.normality.status)}{pValue(group.normality.p_value)}</p>}
@@ -41,7 +59,7 @@ export function StatisticsResults({ result }: { result?: StatisticalResult }) {
     <p>{result.method === 'welch' ? 'Two-sided Welch tests on biological-sample ΔCt; Holm-adjusted across the declared comparison family below.' : 'Descriptive analysis. No significance test was requested.'}</p>
     {!allSmall && <p>Baseline normality: {normalityLabel(result.control_normality.status)}{pValue(result.control_normality.p_value)}. {result.control_normality.reason}</p>}
     <div className="results-table-wrap"><table><thead><tr><th>Condition</th><th>Biological n / control n</th>{tested && <><th>Raw p</th><th>Holm p</th><th>ΔCt difference / individual 95% CI</th></>}<th>Interpretation</th></tr></thead>
-      <tbody>{result.comparisons.map(c => <tr key={c.condition}><td>{c.condition}</td><td>{c.n} / {c.control_n}</td>{tested && <><td>{number(c.p_value)}</td><td>{number(c.adjusted_p_value)}</td>
+      <tbody>{result.comparisons.map(c => <tr key={c.condition}><td title={c.condition}>{name(c.condition)}</td><td>{c.n} / {c.control_n}</td>{tested && <><td>{formatP(c.p_value)}</td><td>{formatP(c.adjusted_p_value)}</td>
         <td>{number(c.delta_ct_difference)} {c.delta_ct_ci && ` [${c.delta_ct_ci.map(number).join(', ')}]`}</td></>}
         <td>{c.status === 'tested' ? (c.adjusted_p_value! < result.alpha ? 'Evidence of a difference under stated assumptions. ' : 'Insufficient evidence of a difference. ') : 'Not tested. '}{c.reason}</td></tr>)}</tbody></table></div>
     {cautions.length > 0 && <ul className="statistics-cautions">{cautions.map(w => <li key={w}>{w}</li>)}</ul>}

@@ -20,13 +20,28 @@ export function log2AxisTicks(low:number,high:number,requestedStep?:number|null)
 /** Number of ticks a log2 axis would draw for fold-change limits and a step in doublings. */
 export function log2TickCount(min:number,max:number,step:number):number {return Math.log2(max/min)/Math.max(1,Math.round(step))}
 
-/** Whole-number log2 limits around positive fold changes, always spanning 0.5x to 2x. */
-export function log2Range(values:number[]):[number,number] {
+const MIN_PAD=0.12,PAD_SHARE=0.06
+
+/**
+ * Log2 limits that hug positive fold changes: 1x is always inside, at least two powers of two
+ * are labelled, and the data get a small margin instead of an empty doubling.
+ */
+export function log2Domain(values:number[],headroom=0):[number,number] {
  const logs=values.filter(value=>Number.isFinite(value)&&value>0).map(Math.log2)
- return [Math.min(-1,Math.floor(Math.min(...logs))),Math.max(1,Math.ceil(Math.max(...logs)))]
+ let low=Math.min(0,...logs),high=Math.max(0,...logs)
+ // Only 1x is labelled: add the next doubling on the side the data lean towards (both when flat).
+ if(high<1&&low>-1){if(high>-low)high=1;else if(-low>high)low=-1;else{low=-1;high=1}}
+ const pad=Math.max(MIN_PAD,PAD_SHARE*(high-low))
+ return [low-pad,high+pad+headroom]
 }
 
-export function foldTickLabel(log2Value:number):string {return Number((2**log2Value).toPrecision(3)).toString()}
+const FRACTIONS:Record<number,string>={[-1]:'½',[-2]:'¼',[-3]:'⅛'}
+/** Fold-change label for a log2 tick: 2×, ½×, 1/16×; ends of a narrow axis keep two significant figures. */
+export function foldTickLabel(log2Value:number):string {
+ const whole=Math.round(log2Value)
+ if(Math.abs(log2Value-whole)>1e-9)return `${Number((2**log2Value).toPrecision(2))}×`
+ return whole>=0?`${2**whole}×`:`${FRACTIONS[whole]??`1/${2**-whole}`}×`
+}
 
 /**
  * Centre and whiskers for biological fold changes. On a log2 axis this is the geometric

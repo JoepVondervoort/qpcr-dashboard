@@ -247,7 +247,7 @@ def main() -> None:
                 page.get_by_role('button',name='Recalculate results',exact=True).click()
                 expect(page.locator('.rebuild-status')).to_contain_text('Rebuilt 2 run(s)',timeout=25000)
                 page.get_by_role('button',name=f'Inspect {target}',exact=True).click()
-                expect(page.locator('.coverage-badges')).not_to_contain_text('stale')
+                expect(page.locator('.assay-inspector .stale-badge')).to_have_count(0)
                 page.get_by_role('button',name='Bars from 1×',exact=True).click()
                 chart=page.get_by_role('img',name=f'{target} · normalized expression',exact=True)
                 for bar in chart.locator('rect[data-mean]').all():
@@ -292,7 +292,8 @@ def main() -> None:
                 page.get_by_role('button',name='All genes',exact=True).click()
                 expect(page.locator('.gene-panel-grid .figure-card').first).to_be_visible()
                 expected_targets=len({r['assay'] for r in after['raw_records']}-set(detail()['analysis_result']['reference_assays']))
-                expect(page.locator('.gene-panel-grid .figure-card')).to_have_count(expected_targets)
+                # Genes without any saved result are listed under the grid instead of taking a panel.
+                expect(page.locator('.gene-panel-grid .figure-card')).to_have_count(expected_targets-page.locator('.unavailable-genes li').count())
                 line_filters=page.get_by_role('group',name='Cell line filter buttons',exact=True)
                 line_filters.get_by_role('button',name='Test cells',exact=True).click()
                 confluency_filters=page.get_by_role('group',name='Confluency filter buttons',exact=True)

@@ -193,3 +193,28 @@ def test_normal_probability_plot_uses_only_observed_biological_delta_ct():
     assert diagnostic['probability_plot']['slope'] == pytest.approx(fit[0])
     assert 'probability_plot' not in normality([1, 2])
     assert 'probability_plot' not in normality([2, 2, 2])
+
+
+def test_experiment_rename_keeps_results_current_and_is_audited(tmp_path,monkeypatch):
+    api,project,experiment=prepare_batch_experiment(tmp_path,monkeypatch)
+    before=api.get_experiment(project['id'],experiment['id'])
+    renamed=api.rename_experiment(project['id'],experiment['id'],api.ExperimentRename(name='  LAD081 · confluency time course  '))
+    assert renamed['name']=='LAD081 · confluency time course'
+    assert renamed['original_filename']==before['original_filename']
+    assert renamed['context_revision']==before['context_revision'],'a display name never invalidates results'
+    assert renamed['audit_events'][-1]['action']=='renamed' and renamed['audit_events'][-1]['previous']==before['name']
+    with pytest.raises(HTTPException) as blank:
+        api.rename_experiment(project['id'],experiment['id'],api.ExperimentRename(name='   '))
+    assert blank.value.status_code==422
+    with pytest.raises(HTTPException) as long:
+        api.rename_experiment(project['id'],experiment['id'],api.ExperimentRename(name='x'*141))
+    assert long.value.status_code==422
+    padded=api.rename_experiment(project['id'],experiment['id'],api.ExperimentRename(name='  '+'y'*140+'\n'))
+    assert padded['name']=='y'*140,'length is checked after trimming'
+    cleaned=api.rename_experiment(project['id'],experiment['id'],api.ExperimentRename(name='LAD\u202e081\tpilot\x00'))
+    assert cleaned['name']=='LAD081 pilot','control and bidi characters never reach the stored name'
+    events=len(cleaned['audit_events'])
+    assert len(api.rename_experiment(project['id'],experiment['id'],api.ExperimentRename(name='LAD081 pilot'))['audit_events'])==events,'an unchanged name is not audited again'
+    with pytest.raises(HTTPException) as missing:
+        api.rename_experiment(project['id'],'no-such-experiment',api.ExperimentRename(name='Valid'))
+    assert missing.value.status_code==404

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import './App.css'
 import './workflow.css'
+import './theme.css'
+import { ExperimentSummary, ExperimentTitle } from './ExperimentHeader'
 import { apiErrorMessage } from './apiErrors'
 
 import type { AnalysisResult, Experiment, Project, Run, SampleMetadata, ExperimentDesign, QualityChange, ExclusionPreview } from './types'
@@ -268,18 +270,24 @@ function App() {
   }
   async function saveAnnotations(values:Record<string,SampleMetadata>) {
     const value=await apiFetch<Experiment>(`/api/projects/${selectedProjectId}/experiments/${activeExperimentId}/sample-instances`,{method:'PATCH',body:JSON.stringify(values)})
-    applyExperiment(value)
+    applyExperiment(value);void loadProjects()
     const metadata=(sample:string)=>sampleAnnotation(value.sample_instances,selectedRunId,sample)
     setSampleGroups(Object.fromEntries(sampleOptions.map(sample=>[sample,metadata(sample).role==='technical_control'?'':analysisGroup(metadata(sample))])))
     setTechnicalSamples(sampleOptions.filter(sample=>metadata(sample).role==='technical_control'))
     setStatus('Sample mapping saved. Recalculate to apply it to expression results.')
   }
+  async function renameExperiment(name:string) {
+    const value=await apiFetch<Experiment>(`/api/projects/${selectedProjectId}/experiments/${activeExperimentId}`,{method:'PATCH',body:JSON.stringify({name})})
+    applyExperiment(value)
+    setProjects(current=>current.map(project=>project.id!==selectedProjectId?project:{...project,experiments:project.experiments.map(experiment=>experiment.id===value.id?{...experiment,name:value.name}:experiment)}))
+    setStatus('Experiment renamed. The uploaded file name is kept as provenance.')
+  }
   async function saveDesign(design:ExperimentDesign) {
-    applyExperiment(await apiFetch<Experiment>(`/api/projects/${selectedProjectId}/experiments/${activeExperimentId}/design`,{method:'PATCH',body:JSON.stringify(design)}))
+    applyExperiment(await apiFetch<Experiment>(`/api/projects/${selectedProjectId}/experiments/${activeExperimentId}/design`,{method:'PATCH',body:JSON.stringify(design)}));void loadProjects()
     setDesignDraft(null)
   }
   async function saveQuality(change:QualityChange) {
-    applyExperiment(await apiFetch<Experiment>(`/api/projects/${selectedProjectId}/experiments/${activeExperimentId}/quality-review`,{method:'PATCH',body:JSON.stringify(change)}))
+    applyExperiment(await apiFetch<Experiment>(`/api/projects/${selectedProjectId}/experiments/${activeExperimentId}/quality-review`,{method:'PATCH',body:JSON.stringify(change)}));void loadProjects()
   }
   async function previewQuality(run_id:string,target_assay:string,measurement_exclusions:Record<string,string>) {
     return apiFetch<ExclusionPreview>(`/api/projects/${selectedProjectId}/experiments/${activeExperimentId}/preview-well-exclusions`,{method:'POST',body:JSON.stringify({run_id,target_assay,measurement_exclusions})})
@@ -289,7 +297,7 @@ function App() {
     const result=await apiFetch<{errors:{run_id?:string;target_assay?:string;reason:string}[];runs_rebuilt:number}>(`${path}/rebuild`,{method:'POST'})
     const value=await apiFetch<Experiment>(path)
     const history=await apiFetch<{id:string;created_at:string;result:AnalysisResult}[]>(`${path}/analyses`)
-    applyExperiment(value);setHistoricalResult(null);setVersions(history);setSelectedStatistics(null)
+    applyExperiment(value);setHistoricalResult(null);setVersions(history);setSelectedStatistics(null);void loadProjects()
     if(!draftDirty){const saved=history.find(v=>v.result.run_id===selectedRunId)?.result;if(saved)setSampleGroups(saved.sample_groups??{})}
     setStatus(`Recalculated ${result.runs_rebuilt} run(s).`)
     return result
@@ -338,6 +346,7 @@ function App() {
       setStatus(`Expression saved: ${completed} target assay(s) in ${selectedRun.name}.`)
       try {
         setVersions(await apiFetch(`/api/projects/${selectedProjectId}/experiments/${activeExperimentId}/analyses`))
+        void loadProjects()
       } catch {
         setStatus('Expression saved. Analysis history could not refresh; reload to retry history.')
       }
@@ -420,9 +429,10 @@ function App() {
         <header className="topbar">
           <div>
             <p className="eyebrow">{selectedProject?.name ?? 'qPCR results'}</p>
-            <h2>{selectedExperiment?.name.replace(/\.(xlsx|xlsm|csv)$/i,'') ?? 'Import your qPCR results'}</h2>
+            {selectedExperiment?<ExperimentTitle key={selectedExperiment.id} name={selectedExperiment.name.replace(/\.(xlsx|xlsm|csv)$/i,'')} onRename={renameExperiment}/>:<h2>Import your qPCR results</h2>}
+            {selectedExperiment&&<ExperimentSummary experiment={selectedExperiment}/>}
             <p className="helper-text">
-              {runs.length} instrument run(s) · {selectedExperiment?.parsed_summary?.record_count ?? 0} measurements · <span title={selectedExperiment?.original_filename}>{selectedExperiment?.original_filename}</span>
+              {selectedExperiment?.parsed_summary?.record_count ?? 0} measurements · file <span title={selectedExperiment?.original_filename}>{selectedExperiment?.original_filename}</span>
             </p>
           </div>
           {selectedExperiment&&<button className={inSetup?'setup-toggle':'setup-toggle quiet-button'} aria-pressed={inSetup} onClick={()=>setActiveTab(hasResults?'setup':'samples')}>Set up analysis</button>}

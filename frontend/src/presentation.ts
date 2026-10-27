@@ -1,16 +1,18 @@
 import {cleanAxes,cleanStyle,defaultPlotOptions,type PlotOptions,type PlotOverride} from './plotOptions'
+import {FIGURE_THEMES,type FigureThemeName} from './figureTheme'
 export const palettes = {
  classic: {label:'Teal & rust',colors:['#167b80','#b56445','#5065a2','#946eab','#7c833a','#be748c','#426b7a','#ab8a38']},
  accessible: {label:'Blue & vermilion',colors:['#0072b2','#d55e00','#009e73','#8b5196','#795b00','#326c86','#333333']},
  cool: {label:'Cool tones',colors:['#2456a6','#6f48a0','#167b80','#98604c','#446b40','#914c72']},
 } as const
-export type Presentation={palette:keyof typeof palettes;colors:Record<string,string>;order:string[];favorites:string[];showSignificance:boolean;plotDefaults:{ct:PlotOptions;expression:PlotOptions};plotOverrides:Record<string,PlotOverride>}
-export const defaultPresentation=():Presentation=>({palette:'classic',colors:{},order:[],favorites:[],showSignificance:true,plotDefaults:{ct:defaultPlotOptions(),expression:defaultPlotOptions()},plotOverrides:{}})
+export type Presentation={figureTheme:FigureThemeName;palette:keyof typeof palettes;colors:Record<string,string>;order:string[];favorites:string[];showSignificance:boolean;plotDefaults:{ct:PlotOptions;expression:PlotOptions};plotOverrides:Record<string,PlotOverride>}
+export const defaultPresentation=():Presentation=>({figureTheme:'screen',palette:'classic',colors:{},order:[],favorites:[],showSignificance:true,plotDefaults:{ct:defaultPlotOptions(),expression:defaultPlotOptions()},plotOverrides:{}})
 export function readPresentation(value:unknown):Presentation {
  const base=defaultPresentation()
  if(!value||typeof value!=='object')return base
  const input=value as Partial<Presentation>
  if(input.palette&&Object.hasOwn(palettes,input.palette))base.palette=input.palette
+ if((FIGURE_THEMES as readonly unknown[]).includes(input.figureTheme))base.figureTheme=input.figureTheme!
  if(input.colors&&typeof input.colors==='object')base.colors=Object.fromEntries(Object.entries(input.colors).filter(([key,color])=>key&&typeof color==='string'&&/^#[0-9a-f]{6}$/i.test(color)))
  const names=(value:unknown)=>Array.isArray(value)?[...new Set(value.filter((v):v is string=>typeof v==='string'))]:[]
  base.order=names(input.order);base.favorites=names(input.favorites)
@@ -42,6 +44,14 @@ export function applyPlotOptions(presentation:Presentation,key:string,kind:'ct'|
   if(updated.axes||updated.style)next.plotOverrides[id]=updated;else delete next.plotOverrides[id]
  }
  return next
+}
+
+/** Share (or stop sharing) the y-range for one quantity while keeping every per-plot axis choice. */
+export function setSharedY(presentation:Presentation,kind:'ct'|'expression',sharedY:boolean):Presentation {
+ const prefix=`["${kind}",`
+ return {...presentation,
+  plotDefaults:{...presentation.plotDefaults,[kind]:{...presentation.plotDefaults[kind],axes:{...presentation.plotDefaults[kind].axes,sharedY}}},
+  plotOverrides:Object.fromEntries(Object.entries(presentation.plotOverrides).map(([key,value])=>[key,key.startsWith(prefix)&&value.axes?{...value,axes:{...value.axes,sharedY}}:value]))}
 }
 
 export function resetPlotColors(presentation:Presentation):Presentation {

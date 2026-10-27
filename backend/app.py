@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -132,6 +133,15 @@ class ExperimentDesign(BaseModel):
     confirmed: bool = False
     reference_validation_note: str = ""
     efficiency_note: str = ""
+
+
+EXPERIMENT_NAME_MAX = 140
+# Control characters and bidirectional overrides could disguise a name; line breaks and tabs become spaces.
+_HIDDEN_NAME_CHARACTERS = re.compile(r"[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+
+
+class ExperimentRename(BaseModel):
+    name: str = Field(max_length=400)
 
 
 class ReviewDecision(BaseModel):
@@ -593,6 +603,24 @@ def update_sample_instances(project_id: str, experiment_id: str, payload: dict[s
     metadata['context_revision']=metadata.get('context_revision',0)+1
     metadata.setdefault('audit_events',[]).append({'at':utc_now(),'action':'sample_instances_updated','instances':list(payload),'before':{k:experiment['sample_instances'][k] for k in payload},'after':{k:v.model_dump() for k,v in payload.items()}})
     save_experiment_metadata(project_id,experiment_id,metadata)
+    return get_experiment(project_id,experiment_id)
+
+
+@app.patch("/api/projects/{project_id}/experiments/{experiment_id}")
+def rename_experiment(project_id: str, experiment_id: str, payload: ExperimentRename) -> dict[str, Any]:
+    """Display name only: the original filename, raw data and saved results are unchanged."""
+    name=" ".join(_HIDDEN_NAME_CHARACTERS.sub("",payload.name).split())
+    if not name:
+        raise HTTPException(status_code=422,detail="Enter a name for this experiment.")
+    if len(name)>EXPERIMENT_NAME_MAX:
+        raise HTTPException(status_code=422,detail=f"Use at most {EXPERIMENT_NAME_MAX} characters for the experiment name.")
+    experiment=get_experiment(project_id,experiment_id)
+    if name==experiment['name']:
+        return experiment
+    metadata=experiment['metadata']
+    metadata.setdefault('audit_events',[]).append({'at':utc_now(),'action':'renamed','previous':experiment['name'],'name':name})
+    with get_db() as conn:
+        conn.execute("UPDATE experiments SET name = ?, metadata = ? WHERE id = ? AND project_id = ?",(name,serialize_json(metadata),experiment_id,project_id))
     return get_experiment(project_id,experiment_id)
 
 

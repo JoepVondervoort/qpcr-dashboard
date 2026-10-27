@@ -23,6 +23,7 @@ from backend.qpcr_engine.sample_roles import is_technical_control
 from backend.qpcr_engine.sample_metadata import infer_sample_metadata, analysis_group
 from backend.qpcr_engine.statistics import holm
 from backend.qpcr_engine.review import sample_instance_id, measurement_id, instances, assess_quality, canonical_hash
+from backend.qpcr_engine.library import condition_results
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("QPCR_DATA_DIR", str(BASE_DIR / "data")))
@@ -264,8 +265,11 @@ def library_summary(experiment: sqlite3.Row, conn: sqlite3.Connection) -> dict[s
     if not selected and legacy:
         selected[(legacy.get("run_id", ""), legacy.get("target_assay", ""))] = legacy
     outdated = sum(result.get("context_revision") != metadata.get("context_revision", 0) for result in selected.values())
+    runs = (read_json_column(experiment["parsed_summary"]) or {}).get("runs", [])
+    run_names = {run["id"]: run["name"] for run in runs}
+    gene_results = [row for result in selected.values() if result.get("samples") for row in condition_results(result, annotations, run_names, metadata.get("context_revision", 0))]
     incomplete = False
-    for run in (read_json_column(experiment["parsed_summary"]) or {}).get("runs", []):
+    for run in runs:
         saved = next((r for (run_id, _), r in selected.items() if run_id == run["id"]), None)
         if saved is None:
             incomplete = True
@@ -276,11 +280,13 @@ def library_summary(experiment: sqlite3.Row, conn: sqlite3.Connection) -> dict[s
         "assay_count": len({r["assay"] for r in records}),
         "biological_sample_count": sum(a.get("role") != "technical_control" for a in annotations.values()),
         "unresolved_count": quality["unresolved_count"],
+        "unresolved_findings": len({(f["kind"], f["run_id"], f["sample"]) for f in quality["flags"] if f["status"] == "needs_review"}),
         "reviewed_count": quality["reviewed_count"],
         "design_confirmed": bool(metadata.get("experiment_design", {}).get("confirmed")),
         "analysis_state": "needs_recalculation" if outdated else "partial" if selected and incomplete else "saved" if selected else "not_calculated",
         "saved_result_count": len(selected),
         "outdated_result_count": outdated,
+        "gene_results": gene_results,
     }
 
 

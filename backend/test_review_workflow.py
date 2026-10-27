@@ -1,5 +1,6 @@
 from __future__ import annotations
 import copy
+import math
 import json
 import pytest
 from fastapi import HTTPException
@@ -138,6 +139,9 @@ def test_library_tracks_current_review_and_analysis_context(tmp_path, monkeypatc
     assert first['assay_count'] == len({r['assay'] for r in original_records})
     assert first['biological_sample_count'] == sum(a['role'] != 'technical_control' for a in detail['sample_instances'].values())
     assert first['unresolved_count'] == detail['quality']['unresolved_count']
+    # Findings group flags with one likely cause (kind, run, sample), as the dashboard does.
+    assert first['unresolved_findings'] == len({(f['kind'], f['run_id'], f['sample']) for f in detail['quality']['flags'] if f['status'] == 'needs_review'})
+    assert first['unresolved_findings'] <= first['unresolved_count']
     api.analyze_experiment(project['id'], experiment['id'], request(api, experiment))
     assert summary()['analysis_state'] == 'partial'
     sample_id = next(k for k, a in detail['sample_instances'].items() if a['role'] == 'biological')
@@ -150,6 +154,31 @@ def test_library_tracks_current_review_and_analysis_context(tmp_path, monkeypatc
     assert summary()['outdated_result_count'] == 0
     assert summary()['saved_result_count'] == 2
     assert api.get_experiment(project['id'], experiment['id'])['raw_records'] == original_records
+
+
+def test_library_lists_condition_results_per_gene_for_cross_experiment_views(tmp_path, monkeypatch):
+    api, project, experiment = prepare_batch_experiment(tmp_path, monkeypatch)
+    def results():
+        return api.list_projects()[0]['experiments'][0]['library_summary']['gene_results']
+    assert results() == []
+    saved = api.analyze_experiment(project['id'], experiment['id'], request(api, experiment))
+    rows = results()
+    assert {row['assay'] for row in rows} == {'T'}
+    assert {row['condition'] for row in rows} == {'base', 'drug', 'other'}
+    baseline = next(row for row in rows if row['condition'] == 'base')
+    drug = next(row for row in rows if row['condition'] == 'drug')
+    assert baseline['is_baseline'] and not drug['is_baseline']
+    expected = [r['fold_change'] for r in saved['samples'] if saved['sample_groups'].get(r['sample']) == 'drug']
+    assert drug['n'] == len(expected) == 2
+    # Geometric mean, 2^(mean log2 fold change), matching the default log2 figures.
+    assert drug['fold_change'] == pytest.approx(math.prod(expected) ** (1 / len(expected)))
+    # The baseline's mean ΔΔCt is zero by construction, so its geometric mean is exactly 1×.
+    assert baseline['fold_change'] == pytest.approx(1.0)
+    assert drug['run_id'] == experiment['runs'][0]['id'] and drug['run_name'] == experiment['runs'][0]['name']
+    assert drug['out_of_date'] is False and 'series' in drug and 'timepoint' in drug
+    sample_id = next(k for k, a in api.get_experiment(project['id'], experiment['id'])['sample_instances'].items() if a['role'] == 'biological')
+    api.update_sample_instances(project['id'], experiment['id'], {sample_id: api.SampleAnnotation(condition='updated condition', series='updated series')})
+    assert all(row['out_of_date'] for row in results())
 
 
 def test_normal_probability_plot_uses_only_observed_biological_delta_ct():

@@ -88,8 +88,9 @@ The baseline is the mean Delta Ct of all selected baseline biological samples.
 This differs from selecting one baseline sample, and reference normalization
 also differs from the historical LAD081 Excel `GEOMEAN`-of-Ct formula.
 
-Use **Statistics · why & what it means** for the calculation rationale,
-normality diagnostics, test assumptions and interpretation. Descriptive mode is
+The **Statistics** tab (choose a run and gene there) shows replicate summaries and
+normality diagnostics; its **Why these statistics** section explains the
+calculation rationale, test assumptions and interpretation. Descriptive mode is
 the default. Independent-group Welch comparisons require explicit confirmation
 of independence and distribution assumptions; Holm correction applies to all
 planned condition-versus-baseline comparisons within that saved analysis.
@@ -99,8 +100,9 @@ assumption-based tests are exploratory. Effect threshold crossing is separate
 from statistical evidence. No protocol-specific positive-control success rule
 is inferred in this release.
 
-Every calculation saves a new version. **Analysis history** opens old snapshots
-and downloads their results and settings as JSON. Legacy saved results are
+Every calculation saves a new version. The **History** tab lists one row per
+calculation (a batch over several genes is one row); expand it to open a gene's
+snapshot or download its results and settings as JSON. Legacy saved results are
 retained during database initialization. The current CSV/SVG exports refer to
 the latest analysis; historical snapshots have their own JSON export.
 
@@ -170,8 +172,9 @@ analyses are preserved; recalculate to apply the updated role policy.
 
 ## Workbook dashboard and publication figures
 
-**1 · Import & setup** contains run selection, reference/baseline choices and the
-raw plate. **2 · Dashboard** is a separate, filterable workbook overview. Raw Ct
+**Set up analysis** contains run selection and reference/baseline choices;
+**Plate & raw data** shows the plate map and raw measurements. The result tabs
+form a separate, filterable workbook overview. Raw Ct
 figures are available immediately, including before normalized analysis exists.
 By default setup analyses every non-reference assay in the selected run; disable
 that option to analyse just one target. Each valid target gets a saved version.
@@ -229,10 +232,10 @@ multiple runs with different days, units or biological-unit identities. Existing
 name-only annotations are read as legacy defaults; original measurements and
 old analysis versions are not rewritten. Persisted mapping, design and well
 exclusion changes increment an analysis-context revision. Old results are
-marked stale, and **Rebuild saved runs** creates new versions using saved
+marked out of date, and **Recalculate results** creates new versions using saved
 references/baselines and the current persisted context. Unsaved setup edits are
 not silently applied or discarded. The overview selects one coherent settings
-profile per run. Historical profiles remain available in Analysis history.
+profile per run. Historical profiles remain available in History.
 
 Record the experimental time origin, unit and study design explicitly. Welch
 inference is available only for a confirmed independent-group design and
@@ -242,7 +245,7 @@ currently support descriptive output only. Reference-validation and assay-
 efficiency notes are saved with analyses; Ct exports do not validate them.
 
 Figure presets export 85 mm or 180 mm SVGs with a minimum 8 pt figure font size.
-Automatic time spacing compacts sparse measured times; proportional elapsed time remains selectable. Biological n stays on the axis or, for dense proportional axes, in the legend.
+Automatic time spacing compacts sparse measured times; proportional elapsed time remains selectable. Biological n is shown in the legend.
 Each figure also downloads the actual scoped data as CSV and methods/provenance
 as JSON. Empty figures disable SVG export. Printed panels retain physical size,
 quality/stale labels and readable text. The responsive workspace collapses on
@@ -277,9 +280,10 @@ analyses are identified separately.
 **Upload results** opens a focused drawer. Importing immediately opens a raw Ct
 heatmap and assay inspector, before normalization setup. A repeated filename is
 identified before import; importing it still creates a separate experiment.
-**Expression setup** contains reference/baseline selection and calculation.
-**Samples & design** contains the experimental design and editable sample
-assignments, with search, run filters and bulk edits to selected rows. Bulk edits
+**Set up analysis** opens two steps: **Samples & design** (the experimental
+design and editable sample assignments, with search, run filters and bulk edits
+to selected rows) and **Normalization** (run, reference genes, baseline samples
+and calculation). Bulk edits
 remain drafts until **Save sample mapping**. Existing saved expression results
 require recalculation after mapping changes.
 
@@ -389,3 +393,42 @@ outside the visible axes. Clipping does not exclude or recalculate observations.
 Exports include actual limits, styling, color keys and clipping notes; plotted
 data CSV adds `visible_under_axis_limits`. Appearance settings remain local to
 this experiment in this browser and do not create scientific analysis versions.
+
+## Workspace navigation and overview (UI revision, October 2026)
+
+- **Experiments** lists every upload with its **Key changes**: the three genes
+  with the largest fold change in either direction (baseline conditions are never
+  counted). QC counts are grouped findings, the same unit the experiment shows.
+- **Gene explorer** shows one gene across every experiment and run, with time
+  points aligned in columns. Values come from each run's own saved analysis and
+  baseline; runs and experiments are shown side by side, never pooled.
+- Inside an experiment, the tabs are result views only: **Overview**, **All
+  genes**, **Plate & raw data**, **Statistics** and **History**. **Set up
+  analysis** (top right) opens the two setup steps. Before any expression exists,
+  a next-step card points to it while the raw Ct heatmap stays visible.
+- One status line replaces the separate banner, chips and per-cell hatching. Its
+  most urgent item leads with its fix (for example **Recalculate results** when
+  results are out of date); other items follow as links. Out-of-date cells are
+  only marked individually (†) when some results are current and others are not.
+- The heatmap sits directly under one filter bar. It groups columns by condition
+  series and run, labels baseline columns, offers a numeric log₂ color legend
+  (⅛× to 8×) and an optional largest-change-first ordering. Genes without any
+  expression result are listed in a footnote instead of a grey row.
+- Expression figures default to a **log₂ fold-change axis**, so 0.5× and 2× sit
+  equally far from 1×. On this axis the line and whiskers show the geometric
+  mean ×/÷ geometric SD (the mean ± SD of log₂ fold change, i.e. of −ΔΔCt).
+  Heatmap cells, the Gene explorer and Key changes use the same geometric mean,
+  so a baseline condition reads exactly 1×; the Statistics cards keep the
+  arithmetic mean saved with each analysis and say so. A
+  linear axis remains available per plot (**Settings → Y scale**) or for the
+  whole dashboard (**Dashboard appearance → Expression axis**). Exports record
+  the scale and summary statistic.
+- QC flags with one likely cause (same run, sample and kind) form one finding,
+  for example "H2O · signal in 9 assays". A finding has two actions: **Save
+  exclusions** (the audit note is composed from the per-well reasons; restoring
+  a well asks why) and **Mark as reviewed** (one note for every flag in the
+  finding).
+- **Plate & raw data** shows the full plate coloured by Ct (darker = lower Ct)
+  for any assay, and marks technical-control signals, open QC findings,
+  undetermined and omitted wells. The raw measurement table and import warnings
+  live here.

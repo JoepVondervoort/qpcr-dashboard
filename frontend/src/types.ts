@@ -72,6 +72,7 @@ export type AnalysisResult = {
   hit_threshold?: number
   statistics?: StatisticalResult
   analysis_id?: string
+  batch_id?: string
   created_at?: string
   sample_metadata?: Record<string, SampleMetadata>
   batch_errors?: {target_assay: string; reason: string}[]
@@ -80,7 +81,10 @@ export type AnalysisResult = {
   samples: SampleRow[]
 }
 
-export type LibrarySummary = {assay_count:number;biological_sample_count:number;unresolved_count:number;reviewed_count:number;design_confirmed:boolean;analysis_state:"needs_recalculation"|"partial"|"saved"|"not_calculated";saved_result_count:number;outdated_result_count:number}
+/** One condition of one saved target/run analysis, as summarized by the library endpoint. */
+export type GeneResult = {assay:string;run_id:string;run_name:string;condition:string;series:string;timepoint:number|null;time_unit:'day'|'hour';is_baseline:boolean;fold_change:number|null;n:number;out_of_date:boolean}
+
+export type LibrarySummary = {assay_count:number;biological_sample_count:number;unresolved_count:number;unresolved_findings?:number;reviewed_count:number;design_confirmed:boolean;analysis_state:"needs_recalculation"|"partial"|"saved"|"not_calculated";saved_result_count:number;outdated_result_count:number;gene_results?:GeneResult[]}
 
 export type Experiment = {
   created_at?: string

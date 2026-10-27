@@ -96,6 +96,11 @@ def main() -> None:
                 page = browser.new_page(viewport={'width': 1440, 'height': 1000})
                 errors = []
                 page.on('pageerror', lambda error: errors.append(str(error)))
+                def open_setup(step):
+                    # Setup is a two-step flow opened from the experiment header, not a result tab.
+                    if not page.locator('.stepper').is_visible():
+                        page.get_by_role('button', name='Set up analysis', exact=True).click()
+                    page.get_by_role('button', name=step, exact=True).click()
                 page.goto(f'http://127.0.0.1:{frontend_port}')
                 expect(page.get_by_text('Your qPCR overview starts here', exact=True)).to_be_visible()
                 # An old running API must be identified before calculation, not rendered as [object Object].
@@ -130,14 +135,14 @@ def main() -> None:
                 expect(page.locator('.inspector-context')).to_contain_text('Selected cell:')
                 expect(page.get_by_label('Dashboard run filter',exact=True)).not_to_have_value('all')
                 page.get_by_role('button',name='Show all conditions',exact=True).click()
-                expect(page.locator('.review-banner')).to_contain_text('QC concern(s) to review')
+                expect(page.locator('.review-banner')).to_contain_text('QC finding')
                 assert page.locator('.figure-card').count()<=1, 'Default view must be focused, not a wall of plots.'
                 page.get_by_label('Inspect assay',exact=True).select_option(target)
                 page.get_by_role('button',name='Target Ct',exact=True).click()
                 expect(page.get_by_role('img',name=f'{target} · raw Ct values',exact=True)).to_be_visible()
                 # Save all target assays for each run, preserving run boundaries.
                 for run in parsed['runs']:
-                    page.get_by_role('button',name='Expression setup',exact=True).click()
+                    open_setup('Normalization')
                     page.get_by_role('button',name=run['name'],exact=False).click()
                     create=page.get_by_role('button',name='Calculate expression',exact=True).first
                     expect(create).to_be_enabled()
@@ -168,8 +173,11 @@ def main() -> None:
                 # Exclusion preview is read-only; applying an exclusion requires a note.
                 data=detail()
                 spread=next(f for f in data['quality']['flags'] if f['kind']=='technical_spread' and f['run_id']==parsed['runs'][0]['id'])
-                button=page.locator('.quality-list button').filter(has_text=f"{spread['assay']} · {spread['sample']}").filter(has_text=parsed['runs'][0]['name'])
+                # Findings are grouped by run and sample; the assay is chosen inside the finding.
+                button=page.locator('.quality-list button').filter(has_text=spread['sample']).filter(has_text='wide technical range').filter(has_text=parsed['runs'][0]['name'])
                 button.click()
+                assay_chip=page.locator('.qc-assays').get_by_role('button',name=spread['assay'],exact=True)
+                if assay_chip.count():assay_chip.click()
                 well=max([r for r in spread['measurements'] if r['ct'] is not None and not r['omit']],key=lambda r:r['ct'])
                 field=page.get_by_label(f"Exclusion reason for {well['run_id']} {well['well']} {well['assay']}",exact=True)
                 field.fill('Source curve reviewed; test exclusion rationale')
@@ -177,22 +185,23 @@ def main() -> None:
                 page.get_by_role('button',name='Preview exclusion effect',exact=True).click()
                 expect(page.locator('.exclusion-preview')).to_contain_text('Descriptive normalization preview only',timeout=15000)
                 assert len(page.request.get(path+'/analyses').json())==len(before)
-                page.get_by_label('Reason for this exclusion / restoration change',exact=True).fill('Documented review after inspecting instrument output')
-                page.get_by_role('button',name='Apply exclusions and preview recalculation',exact=True).click()
-                expect(page.locator('.review-banner')).to_contain_text('need recalculation',timeout=10000)
+                page.get_by_role('button',name='Save exclusions',exact=True).click()
+                expect(page.locator('.review-banner')).to_contain_text('out of date',timeout=10000)
                 changed=detail()
                 assert changed['measurement_exclusions'][well['measurement_id']]
+                # The audit note is composed from the per-well reason; no second reason field is needed.
+                assert 'test exclusion rationale' in changed['audit_events'][-1]['reason']
                 assert changed['raw_records']==data['raw_records']
                 # Acknowledge a control concern without erasing the original signal.
                 concern=next(f for f in changed['quality']['flags'] if f['kind']=='control_signal')
-                page.locator('.quality-list button').filter(has_text=f"{concern['assay']} · {concern['sample']}").filter(has_text=next(r['name'] for r in parsed['runs'] if r['id']==concern['run_id'])).click()
+                page.locator('.quality-list button').filter(has_text=concern['sample']).filter(has_text='signal in').filter(has_text=next(r['name'] for r in parsed['runs'] if r['id']==concern['run_id'])).click()
                 page.get_by_label('Review status',exact=True).select_option('all')
-                page.get_by_label('Review finding (required to acknowledge this concern)',exact=True).fill('Control trace and assignment inspected; follow-up documented')
-                page.get_by_role('button',name='Record review note',exact=True).click()
+                page.get_by_label('Review note',exact=True).fill('Control trace and assignment inspected; follow-up documented')
+                page.locator('.qc-action').get_by_role('button',name=re.compile(r'^Mark .*reviewed$')).click()
                 expect(page.locator('.review-note')).to_contain_text('Control trace and assignment inspected',timeout=10000)
                 assert next(f for f in detail()['quality']['flags'] if f['id']==concern['id'])['status']=='reviewed'
                 # Explicit design metadata controls the available inference model.
-                page.get_by_role('button',name='Samples & design',exact=True).click()
+                open_setup('Samples & design')
                 design=page.locator('.samples-workspace .design-panel')
                 design.get_by_label('Time measured from',exact=True).fill('transfection')
                 design.get_by_label('Experimental unit',exact=True).fill('independently transfected culture well')
@@ -200,18 +209,18 @@ def main() -> None:
                 design.get_by_role('checkbox').check()
                 design.get_by_role('button',name='Save experimental design',exact=True).click()
                 expect(design).to_contain_text('Design saved.',timeout=10000)
-                page.get_by_role('button',name='Expression setup',exact=True).click()
+                open_setup('Normalization')
                 expect(page.get_by_label('Statistical approach',exact=False).locator('option[value="welch"]')).to_have_attribute('disabled','')
-                page.get_by_role('button',name='Samples & design',exact=True).click()
+                open_setup('Samples & design')
                 design.get_by_label('Study design',exact=False).select_option('independent')
                 design.get_by_role('checkbox').check()
                 design.get_by_role('button',name='Save experimental design',exact=True).click()
-                page.get_by_role('button',name='Expression setup',exact=True).click()
+                open_setup('Normalization')
                 expect(page.get_by_label('Statistical approach',exact=False).locator('option[value="welch"]')).not_to_have_attribute('disabled','',timeout=10000)
                 # A sample instance can be reassigned without changing another run's material.
                 page.get_by_role('button',name='Overview',exact=True).click()
                 page.get_by_label('Experimental time filter',exact=True).select_option('all')
-                page.get_by_role('button',name='Samples & design',exact=True).click()
+                open_setup('Samples & design')
                 mapped=detail();row=next(r for r in mapped['raw_records'] if r['run_id']==parsed['runs'][0]['id'] and mapped['sample_instances'][r['sample_instance_id']]['timepoint']==21)
                 other=next(r for r in mapped['raw_records'] if r['run_id']==parsed['runs'][1]['id'] and mapped['sample_instances'][r['sample_instance_id']]['timepoint']==21)
                 page.get_by_label('Sample mapping run',exact=True).select_option(row['run_id'])
@@ -235,7 +244,7 @@ def main() -> None:
                 assert after['sample_instances'][row['sample_instance_id']]['timepoint']==22
                 assert after['sample_instances'][other['sample_instance_id']]['timepoint']==21
                 page.get_by_role('button',name='Overview',exact=True).click()
-                page.get_by_role('button',name='Recalculate saved runs',exact=True).click()
+                page.get_by_role('button',name='Recalculate results',exact=True).click()
                 expect(page.locator('.rebuild-status')).to_contain_text('Rebuilt 2 run(s)',timeout=25000)
                 page.get_by_role('button',name=f'Inspect {target}',exact=True).click()
                 expect(page.locator('.coverage-badges')).not_to_contain_text('stale')
@@ -433,6 +442,11 @@ def main() -> None:
                 before_settings=page.request.get(normality_path).json();before_versions=len(page.request.get(normality_path+'/analyses').json())
                 page.get_by_role('button',name='Settings for T expression',exact=True).click()
                 settings=page.get_by_role('dialog',name='Figure settings: T',exact=True)
+                # Expression plots default to a log2 fold-change axis; a zero minimum is only valid on a linear axis.
+                expect(evidence_chart).to_have_attribute('data-y-scale','log2')
+                settings.get_by_label('Y minimum',exact=True).fill('0')
+                expect(settings.get_by_role('button',name='Save this plot',exact=True)).to_be_disabled()
+                settings.get_by_label('Y scale',exact=True).select_option('linear')
                 settings.get_by_label('Y maximum',exact=True).fill('5')
                 settings.get_by_label('Y minimum',exact=True).fill('10')
                 expect(settings.get_by_role('button',name='Save this plot',exact=True)).to_be_disabled()
@@ -519,7 +533,7 @@ def main() -> None:
                 page.keyboard.press('Escape')
                 page.get_by_label('Experimental time filter',exact=True).select_option('all')
                 # A changed design marks the old test historical and removes its plot star.
-                page.get_by_role('button',name='Samples & design',exact=True).click()
+                open_setup('Samples & design')
                 design_panel=page.locator('.samples-workspace .design-panel')
                 design_panel.get_by_label('Study design',exact=False).select_option('paired')
                 design_panel.get_by_role('checkbox').check()

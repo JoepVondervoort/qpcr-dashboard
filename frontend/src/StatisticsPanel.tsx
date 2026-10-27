@@ -1,4 +1,6 @@
-export type Diagnostic = { probability_plot?:{theoretical:number[];observed:number[];slope:number;intercept:number;r_squared:number}; status: string; p_value: number | null; reason: string }
+import { condenseWarnings, normalityLabel } from './statisticsText'
+
+export type Diagnostic ={ probability_plot?:{theoretical:number[];observed:number[];slope:number;intercept:number;r_squared:number}; status: string; p_value: number | null; reason: string }
 export type GroupResult = {
   condition: string; samples: string[]; n: number; incomplete_n: number
   fold_change_mean: number | null; fold_change_sd: number | null
@@ -14,35 +16,43 @@ export type StatisticalResult = {
     delta_ct_difference?: number; delta_ct_ci?: number[] }[]
 }
 const number = (value: number | null | undefined) => value == null ? '—' : value.toPrecision(4)
+const pValue = (value: number | null | undefined) => value == null ? '' : `; p = ${number(value)}`
 
 export function StatisticsResults({ result }: { result?: StatisticalResult }) {
   if (!result) return <p>Calculate a new analysis to see biological replicate summaries and diagnostics.</p>
-  return <section className="panel">
+  const allSmall = result.groups.length > 0 && result.groups.every(group => group.n < 3)
+  const tested = result.comparisons.some(c => c.status === 'tested')
+  // Condition-specific caveats stay visible; general method statements go in the notes.
+  const condensed = condenseWarnings(result.warnings)
+  const specific = (warning: string) => /fewer than three|departure from normality/i.test(warning)
+  const cautions = condensed.filter(w => specific(w) && !(allSmall && /fewer than three/i.test(w)))
+  const general = condensed.filter(w => !specific(w))
+  return <section className="panel statistics-results">
     <h3>Biological replicate summary</h3>
-    <p>Mean fold change ± sample SD. Each dot is one biological sample. Missing samples do not contribute to n.</p>
+    <p>Arithmetic mean fold change ± sample SD per condition, as saved with the analysis (figures on a log₂ axis show the geometric mean). n counts biological samples; technical wells are averaged first.{allSmall ? ' Every condition has fewer than three biological samples, so normality cannot be assessed and any test would be exploratory.' : ''}</p>
     <div className="condition-cards">{result.groups.map(group => <article className="condition-card" key={group.condition}>
       <h4>{group.condition}</h4>
-      <strong>{number(group.fold_change_mean)}×</strong><span> ± {number(group.fold_change_sd)} SD</span>
-      <p>n = {group.n}; incomplete = {group.incomplete_n}</p>
-      <p>{group.is_baseline ? 'Baseline condition' : group.above_threshold ? 'Mean meets effect threshold' : 'Mean below effect threshold'}</p>
-      {!group.is_baseline && <p>{group.replicates_above_threshold}/{group.n} biological replicates meet threshold</p>}
-      <details><summary>Normality diagnostic</summary><p>{group.normality.status}; p = {number(group.normality.p_value)}. {group.normality.reason}</p></details>
+      <p className="condition-value"><strong>{number(group.fold_change_mean)}×</strong> ± {number(group.fold_change_sd)} SD</p>
+      <p>n = {group.n}{group.incomplete_n ? ` · ${group.incomplete_n} incomplete` : ''}</p>
+      <p>{group.is_baseline ? 'Baseline condition' : `${group.above_threshold ? 'Mean meets' : 'Mean below'} the effect threshold · ${group.replicates_above_threshold}/${group.n} samples meet it`}</p>
+      {!allSmall && <p className="condition-normality">Normality: {normalityLabel(group.normality.status)}{pValue(group.normality.p_value)}</p>}
     </article>)}</div>
     <h3>Comparisons to baseline</h3>
     <p>{result.method === 'welch' ? 'Two-sided Welch tests on biological-sample ΔCt; Holm-adjusted across the declared comparison family below.' : 'Descriptive analysis. No significance test was requested.'}</p>
-    <p>Baseline normality: {result.control_normality.status}; p = {number(result.control_normality.p_value)}. {result.control_normality.reason}</p>
-    <div className="results-table-wrap"><table><thead><tr><th>Condition</th><th>Biological n / control n</th><th>Raw p</th><th>Holm p</th><th>ΔCt difference / individual 95% CI</th><th>Interpretation</th></tr></thead>
-      <tbody>{result.comparisons.map(c => <tr key={c.condition}><td>{c.condition}</td><td>{c.n} / {c.control_n}</td><td>{number(c.p_value)}</td><td>{number(c.adjusted_p_value)}</td>
-        <td>{number(c.delta_ct_difference)} {c.delta_ct_ci && ` [${c.delta_ct_ci.map(number).join(', ')}]`}</td>
+    {!allSmall && <p>Baseline normality: {normalityLabel(result.control_normality.status)}{pValue(result.control_normality.p_value)}. {result.control_normality.reason}</p>}
+    <div className="results-table-wrap"><table><thead><tr><th>Condition</th><th>Biological n / control n</th>{tested && <><th>Raw p</th><th>Holm p</th><th>ΔCt difference / individual 95% CI</th></>}<th>Interpretation</th></tr></thead>
+      <tbody>{result.comparisons.map(c => <tr key={c.condition}><td>{c.condition}</td><td>{c.n} / {c.control_n}</td>{tested && <><td>{number(c.p_value)}</td><td>{number(c.adjusted_p_value)}</td>
+        <td>{number(c.delta_ct_difference)} {c.delta_ct_ci && ` [${c.delta_ct_ci.map(number).join(', ')}]`}</td></>}
         <td>{c.status === 'tested' ? (c.adjusted_p_value! < result.alpha ? 'Evidence of a difference under stated assumptions. ' : 'Insufficient evidence of a difference. ') : 'Not tested. '}{c.reason}</td></tr>)}</tbody></table></div>
-    <p>Comparison family: {result.family}. {result.software}.</p>
-    <ul>{result.warnings.map(w => <li key={w}>{w}</li>)}</ul>
+    {cautions.length > 0 && <ul className="statistics-cautions">{cautions.map(w => <li key={w}>{w}</li>)}</ul>}
+    <details className="statistics-notes"><summary>Method notes</summary><p>Comparison family: {result.family}. {result.software}.</p>
+    <ul>{general.map(w => <li key={w}>{w}</li>)}</ul></details>
   </section>
 }
 
 export function StatisticsExplanation() {
-  return <section className="panel methodology">
-    <h3>Why these statistics, and what do they mean?</h3>
+  return <details className="panel methodology">
+    <summary>Why these statistics, and what do they mean?</summary>
     <p>The experiment determines the statistical method. A normality test alone cannot choose the right test. This release supports descriptive summaries and explicitly confirmed independent-group comparisons. Paired, repeated-measure and complex designs require a different model.</p>
     <details open><summary>1. What counts as a replicate?</summary>
       <p>A biological replicate is a separately prepared biological sample, such as a separately transfected culture well. Repeated qPCR measurements of that same material are technical replicates. We average technical Ct measurements first; four technical wells from two biological samples still give biological n = 2.</p>
@@ -75,5 +85,5 @@ export function StatisticsExplanation() {
     </details>
     <details><summary>8. Study design, QC review and saved result validity</summary><p>Inferential analysis requires a recorded experimental unit, time origin and confirmed independent-group design, plus explicit distribution-assumption confirmation. Paired, blocked and repeated-measure designs support descriptive output until an appropriate model is implemented. Repeated biological-unit IDs cannot be counted as independent sample instances.</p><p>Technical-control signals and large technical Ct ranges are review flags, not diagnoses. Well exclusions and restorations need reasons and are retained in an audit trail. Previewing an exclusion does not save results or perform inferential tests. Changing mappings, design or well exclusions makes previous results stale; rebuilding creates new versions. The overview selects one coherent settings profile per run instead of silently mixing analyses made with different references or baselines.</p></details>
     <p>Method references: <a href="https://www.gene-quantification.de/miqe.html" target="_blank" rel="noreferrer">MIQE reporting guidance</a>, <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.shapiro.html" target="_blank" rel="noreferrer">Shapiro–Wilk</a>, <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.ttest_ind.html" target="_blank" rel="noreferrer">Welch test and confidence intervals</a>, <a href="https://www.statsmodels.org/stable/generated/statsmodels.stats.multitest.multipletests.html" target="_blank" rel="noreferrer">multiple-comparison methods</a>.</p>
-  </section>
+  </details>
 }

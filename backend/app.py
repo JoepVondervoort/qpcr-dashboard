@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from backend import APP_NAME, __version__
 from backend.qpcr_engine import import_qpcr_file, summarize_results
 from backend.qpcr_engine.sample_roles import is_technical_control
 from backend.qpcr_engine.sample_metadata import infer_sample_metadata, analysis_group
@@ -34,14 +35,13 @@ DB_PATH = DATA_DIR / "qpcr.db"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="qPCR Analysis Workbench", version="0.1.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Cross-origin access is off unless listed: with "*", any website open in the browser could
+# read local research data. The interface itself is same-origin (packaged app or Vite proxy).
+CORS_ORIGINS = [origin.strip() for origin in os.environ.get("QPCR_CORS_ORIGINS", "").split(",") if origin.strip()]
+
+app = FastAPI(title=APP_NAME, version=__version__)
+if CORS_ORIGINS:
+    app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
 
 
 def utc_now() -> str:
@@ -253,7 +253,7 @@ def read_json_column(value: str | None) -> Any:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "analysis_contract": "5", "app": "qPCR Analysis Workbench"}
+    return {"status": "ok", "analysis_contract": "5", "app": APP_NAME, "version": __version__}
 
 
 def library_summary(experiment: sqlite3.Row, conn: sqlite3.Connection) -> dict[str, Any]:

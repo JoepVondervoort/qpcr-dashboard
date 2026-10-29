@@ -67,6 +67,7 @@ def wait_for_server(url: str, process: subprocess.Popen) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workbook', type=Path, help='Optional local LAD081 workbook; otherwise use synthetic data.')
+    parser.add_argument('--packaged', action='store_true', help='Serve interface and API at one address through the qpcr-workbench launcher, as installed copies do.')
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='qpcr-browser-') as temporary:
         data = Path(temporary)
@@ -79,15 +80,21 @@ def main() -> None:
         backend_port, frontend_port = unused_port(), unused_port()
         client = data/'client'
         env = {**os.environ, 'VITE_API_ROOT': '', 'QPCR_BACKEND_URL': f'http://127.0.0.1:{backend_port}'}
-        subprocess.run(['npm', 'run', 'build', '--', '--outDir', str(client)], cwd=ROOT/'frontend', env=env, check=True)
+        # The launcher serves frontend/dist from a checkout, as a wheel serves its bundled copy.
+        subprocess.run(['npm', 'run', 'build', '--', '--outDir', str(ROOT/'frontend'/'dist' if args.packaged else client)], cwd=ROOT/'frontend', env=env, check=True)
         processes = []
         try:
-            backend = subprocess.Popen([sys.executable, '-m', 'uvicorn', 'backend.app:app', '--host', '127.0.0.1', '--port', str(backend_port), '--log-level', 'warning'], cwd=ROOT, env={**os.environ, 'QPCR_DATA_DIR': str(data/'store'), 'QPCR_UPLOAD_DIR': str(data/'uploads')})
-            processes.append(backend)
-            frontend = subprocess.Popen(['npm', 'run', 'preview', '--', '--host', '127.0.0.1', '--port', str(frontend_port), '--outDir', str(client)], cwd=ROOT/'frontend', env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            processes.append(frontend)
+            if args.packaged:
+                frontend_port = backend_port
+                backend = subprocess.Popen([sys.executable, '-m', 'backend', '--no-browser', '--port', str(backend_port), '--data-dir', str(data/'home')], cwd=ROOT, stdout=subprocess.DEVNULL)
+                processes.append(backend)
+            else:
+                backend = subprocess.Popen([sys.executable, '-m', 'uvicorn', 'backend.app:app', '--host', '127.0.0.1', '--port', str(backend_port), '--log-level', 'warning'], cwd=ROOT, env={**os.environ, 'QPCR_DATA_DIR': str(data/'store'), 'QPCR_UPLOAD_DIR': str(data/'uploads')})
+                processes.append(backend)
+                frontend = subprocess.Popen(['npm', 'run', 'preview', '--', '--host', '127.0.0.1', '--port', str(frontend_port), '--outDir', str(client)], cwd=ROOT/'frontend', env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                processes.append(frontend)
             wait_for_server(f'http://127.0.0.1:{backend_port}/api/health', backend)
-            wait_for_server(f'http://127.0.0.1:{frontend_port}', frontend)
+            wait_for_server(f'http://127.0.0.1:{frontend_port}', processes[-1])
             with sync_playwright() as playwright:
                 launch = {'headless': True}
                 if os.environ.get('QPCR_TEST_CHROMIUM'):

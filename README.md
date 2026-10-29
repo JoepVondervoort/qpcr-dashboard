@@ -1,145 +1,177 @@
 # qPCR Analysis Workbench
 
-A local browser workbench for turning raw qPCR Ct/Cq instrument exports into
-processed results. Python parses the inputs and performs the scientific
-calculations; the React interface presents the measurements, calculation
-steps, and exports.
+The qPCR Analysis Workbench turns raw Ct/Cq exports from qPCR instruments into
+normalized, quality-checked results and publication figures. It runs on your own
+computer and opens in your web browser. Your files and results are not uploaded
+anywhere.
 
-## Local startup
+**[Installation](#installation)** · [Using the workbench](#using-the-workbench) ·
+[Calculation conventions](#calculation-conventions) · [Development](#development) ·
+[User guide](docs/user-guide.md)
 
-1. Create and activate a Python environment:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
+## Features
+
+- Imports CSV and Excel (XLSX/XLSM) result exports, including QuantStudio workbooks
+  that contain several instrument runs.
+- Shows raw Ct values as a heatmap, plate map and table immediately after import.
+- Normalizes target genes to one or more reference genes and a group of baseline
+  samples, separately for each run.
+- Flags signal in no-template controls and wide spread between technical replicates,
+  and records every exclusion and review note in an audit trail.
+- Summarizes biological replicates. For a confirmed independent-group design it runs
+  Welch tests with Holm correction.
+- Exports figures as vector SVG, 600 dpi PNG and PDF, together with the plotted data
+  (CSV) and the methods and settings used (JSON).
+- Saves every calculation as a new version, so earlier results remain available.
+
+## Installation
+
+The workbench is installed as a Python package with [uv](https://docs.astral.sh/uv/).
+You do not need to install Python, Node.js or Git, and you do not need administrator
+rights.
+
+**Requirements**
+
+- Windows, macOS or Linux
+- An internet connection during installation
+- A GitHub account with access to this repository (while the repository is private)
+
+**Quick install on Windows**
+
+Run each command in **PowerShell**.
+
+1. Install uv, then close and reopen PowerShell. Skip this step if uv is already
+   installed, for example for saRNA Designer.
+   ```powershell
+   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
    ```
-
-2. Install backend dependencies and start the API:
-   ```bash
-   pip install -r backend/requirements.txt
-   python -m uvicorn backend.app:app --host 0.0.0.0 --port 8000
+2. Download `qpcr_workbench-0.1.0-py3-none-any.whl` from the
+   [latest release](https://github.com/JoepVondervoort/qpcr-dashboard/releases/latest)
+   to your Downloads folder.
+3. Install the workbench, then close and reopen PowerShell:
+   ```powershell
+   uv tool install --python 3.11 "$env:USERPROFILE\Downloads\qpcr_workbench-0.1.0-py3-none-any.whl"
    ```
-
-3. In another terminal, install frontend dependencies and start Vite:
-   ```bash
-   cd frontend
-   npm install --legacy-peer-deps --force
-   npm run dev -- --host 0.0.0.0 --port 4173
+4. Start it:
+   ```powershell
+   qpcr-workbench
    ```
+   The workbench opens in your browser at <http://127.0.0.1:8002/>. Keep the
+   PowerShell window open while you work, and press **Ctrl+C** in it to stop.
 
-4. Open http://localhost:4173
+For macOS, troubleshooting and a more detailed walkthrough, see
+**[INSTALL.md](INSTALL.md)**.
 
-## Raw input and processing
+**Updating.** Download the new `.whl` file from the releases page and run the
+install command from step 3 with the new file name. `uv tool upgrade` does not
+update installations made from a file. Your data is kept.
 
-- CSV and XLSX/XLSM Ct/Cq result exports are supported. Ct calling from
-  fluorescence curves is not implemented.
-- For QuantStudio-style workbooks, the importer reads instrument result
-  sections that have run metadata and skips derived calculation tabs.
-- Repeated result sections are preserved as separate runs. The LAD081 example
-  workbook was verified to import 560 measurements as two 384-well runs of
-  280 measurements each. The per-gene calculation tabs are not used as input.
-- Select a run, target assay, reference assay(s), and baseline sample before
-  calculating. The app does not select a biological baseline on the user's
-  behalf or combine measurements from separate runs.
-- Technical measurements are averaged for each sample/assay. For multiple
-  reference assays, the engine uses the arithmetic mean of their Ct means,
-  equivalent to a geometric mean of their quantities under the standard
-  equal-efficiency assumption. It does not take a geometric mean of Ct values.
-- Undetermined, missing, invalid, and instrument-omitted measurements remain
-  distinguishable in the imported data. Derived results are sample-level;
-  biological replicates are not pooled automatically.
-- The plate map reflects 96- or 384-well dimensions when identified in the
-  export. A well can show multiple assay measurements.
-- Results can be exported as CSV and SVG.
+**Where your data is stored.** All projects, settings, saved analyses and copies
+of imported files are kept in `.qpcr-workbench` in your home folder
+(`C:\Users\<name>\.qpcr-workbench` on Windows). Updating or uninstalling the
+workbench does not change this folder. To make a backup, stop the workbench and
+copy the folder. The workbench only accepts connections from your own computer.
 
-This initial workbook importer is verified against the included LAD081
-QuantStudio workbook, not arbitrary Excel layouts. Other workbook formats may
-need selectable regions and column mapping before they can be imported.
+## Using the workbench
 
-## Local data and backup
+1. **Import.** Choose **Upload results**, name the project and select an instrument
+   export. The raw Ct overview opens straight away. Each instrument run in the file
+   is kept separate.
+2. **Describe the samples.** Open **Set up analysis** and check the suggested
+   conditions, time points and biological replicates under **Samples & design**.
+   Save the sample mapping.
+3. **Normalize.** Under **Normalization**, select the run, the reference genes and
+   the baseline samples, then choose **Calculate expression**.
+4. **Review quality.** The QC review lists control signals and technical replicates
+   with a Ct range above 1 cycle (adjustable). Exclude wells with a reason, or mark a
+   finding as reviewed with a note.
+5. **Inspect and export.** Use **Overview**, **All genes**, **Statistics** and
+   **History** to explore the results. Every figure has an **Export** menu.
 
-The app stores its SQLite database and preserved original uploads here:
+The **Experiments** page lists all imports, and the **Gene explorer** shows one gene
+across experiments and runs. The [user guide](docs/user-guide.md) describes every
+view and setting.
 
-- `backend/data/qpcr.db`
-- `backend/uploads/`
+## Calculation conventions
 
-Back up both together:
+The main analysis choices are listed here so that results can be interpreted and
+reported correctly. The [user guide](docs/user-guide.md) gives the full details.
+
+- Technical wells are averaged within each biological sample. They do not increase
+  the biological n.
+- With several reference genes, the reference value is the arithmetic mean of their
+  Ct means. Under the usual equal-efficiency assumption, this equals the geometric
+  mean of their quantities. Every selected reference gene must be present for a
+  sample to receive a normalized result.
+- The baseline is the mean ΔCt of all selected baseline biological samples.
+- Instrument runs are never pooled, and biological replicates are not combined
+  automatically.
+- No-template controls (for example H2O, water and NTC) are recognized and excluded
+  from normalization and statistics. They remain visible in the raw data.
+- Expression figures use a log₂ fold-change axis by default and show the geometric
+  mean ×/÷ geometric SD. A linear axis is available.
+- Statistics are descriptive by default. Welch tests require an explicitly confirmed
+  independent-group design and confirmed assumptions. Paired, repeated-measure,
+  blocked and factorial designs are currently reported descriptively only.
+- The screening threshold (default 1.5×) marks large effects. Crossing it is not
+  evidence of statistical significance.
+- Saved analyses keep the settings and inputs they were calculated with. Changing
+  the sample setup or updating the workbench never recalculates them silently.
+
+## Scope and limitations
+
+- Input must be Ct/Cq result exports. Ct values are not called from amplification
+  curves.
+- The workbook importer has been verified on QuantStudio exports of the LAD081
+  layout. Other workbook layouts may not import yet; they produce an error message
+  instead of an empty experiment.
+- Assay efficiencies are not estimated or applied.
+- This is a single-user application for one computer. It has no user accounts,
+  sharing or central hosting.
+
+## Development
+
+**Requirements:** Python 3.11 or later and Node.js 20.19 or later.
+
+**Set up**
+
 ```bash
-mkdir -p backups
-tar czf backups/qpcr-backup-$(date +%F).tgz backend/data backend/uploads
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+npm --prefix frontend ci
 ```
 
-This is a local pilot. It does not include accounts, multi-user hosting, or
-public deployment.
+**Run in development mode** (two terminals)
 
-## Biological replicate analysis (method version 2.0)
+```bash
+python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload
+```
 
-After selecting an instrument run, review suggested condition labels, references,
-and day-zero baseline samples. Select all biological controls for the baseline.
-Name each biological sample's condition; leave no-template controls ungrouped.
-A condition cannot mix baseline and treatment samples. To exclude a biological
-sample from this analysis, enter a reason; clearing it restores the sample.
-The original upload and measurements are preserved.
+```bash
+cd frontend
+npm run dev -- --host 127.0.0.1 --port 4173
+```
 
-The dashboard shows biological replicate points, condition mean fold change and
-sample SD, plus the adjustable screening threshold (default 1.5×). Technical wells
-are averaged within each biological sample and do not increase biological n.
-All selected reference assays are required for a normalized sample result.
-The baseline is the mean Delta Ct of all selected baseline biological samples.
-This differs from selecting one baseline sample, and reference normalization
-also differs from the historical LAD081 Excel `GEOMEAN`-of-Ct formula.
+Open <http://localhost:4173>. Vite forwards `/api` and `/openapi.json` to the API on
+port 8000, so the browser only talks to one address. Use `--host 0.0.0.0` only if you
+need to open the development server from another device, because it makes the
+server reachable from your network.
 
-The **Statistics** tab (choose a run and gene there) shows replicate summaries and
-normality diagnostics; its **Why these statistics** section explains the
-calculation rationale, test assumptions and interpretation. Descriptive mode is
-the default. Independent-group Welch comparisons require explicit confirmation
-of independence and distribution assumptions; Holm correction applies to all
-planned condition-versus-baseline comparisons within that saved analysis.
-Paired, repeated-measure, blocked and factorial inference is not implemented.
-With two biological observations normality is not assessable; any requested
-assumption-based tests are exploratory. Effect threshold crossing is separate
-from statistical evidence. No protocol-specific positive-control success rule
-is inferred in this release.
+To run the packaged single-address mode from a checkout, build the interface with
+`npm --prefix frontend run build` and start `python -m backend`. This is the same
+launcher as the installed `qpcr-workbench` command.
 
-Every calculation saves a new version. The **History** tab lists one row per
-calculation (a batch over several genes is one row); expand it to open a gene's
-snapshot or download its results and settings as JSON. Legacy saved results are
-retained during database initialization. The current CSV/SVG exports refer to
-the latest analysis; historical snapshots have their own JSON export.
+**Checks**
 
-The upgrade roadmap is in [docs/upgrade-plan.md](docs/upgrade-plan.md). Local
-single-launcher packaging, cross-experiment comparisons and private hosted
-accounts remain subsequent work. The current development startup commands above
-still apply; install the updated backend requirements (including SciPy).
+```bash
+python -m pytest
+npm --prefix frontend test
+npm --prefix frontend run lint
+npm --prefix frontend run build
+```
 
-## Private development inputs
-
-Research workbooks, thesis PDFs, local databases, uploads and backups are ignored
-by Git. Keep them on your computer; they are not needed to install the app.
-The LAD081 workbook checks run when that local file is available and otherwise
-skip. Synthetic calculation and CSV tests run without private research inputs.
-Do not force-add research files to commits. Ignoring a file does not remove a
-copy already present in an earlier commit's history.
-
-## First import and browser regression
-
-You can select a file and click **Create project and import** from an empty
-workspace. The app creates a project using the entered name, detects instrument
-runs, and opens the first run with raw measurements and suggested setup visible.
-Run cards let you switch between runs without combining their measurements.
-Unsupported layouts return an error rather than saving an empty experiment.
-
-For development, restart the backend after Python changes, or start it with
-`python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload`.
-The browser uses the frontend address for API requests. Vite forwards `/api` and
-`/openapi.json` to `http://127.0.0.1:8000`, avoiding browser cross-origin and
-Windows/WSL localhost resolution differences. Set `QPCR_BACKEND_URL` when starting
-Vite to forward to a different backend. `VITE_API_ROOT` remains an explicit
-override for deployments that serve the API at a separate address. Static hosting
-without Vite must also forward those routes or set that override. Optional `QPCR_DATA_DIR` and
-`QPCR_UPLOAD_DIR` settings relocate backend storage.
-
-An optional end-to-end browser regression uses synthetic data by default and
-temporary backend storage, ports and frontend output:
+An end-to-end browser test uses synthetic data, temporary storage and free ports:
 
 ```bash
 python -m pip install playwright
@@ -147,326 +179,64 @@ python -m playwright install chromium
 python scripts/check_import_browser.py
 ```
 
-Pass `--workbook /path/to/local-workbook.xlsx` to verify the LAD081 development
-example. The private workbook is not part of the repository. Set
-`QPCR_TEST_CHROMIUM` only when using an existing Chromium executable. The script
-requires backend dependencies, Node, and installed frontend dependencies.
+Options: `--packaged` runs the same checks through the `qpcr-workbench` launcher
+(this rebuilds `frontend/dist`), and `--workbook <file.xlsx>` adds checks against a
+local LAD081 workbook. Set `QPCR_TEST_CHROMIUM` to use an existing Chromium
+executable.
 
-Reference assays and baseline biological samples use checkboxes with explicit
-selection counts. The live setup summary lists exactly what is missing and
-enables **Create dashboard and save analysis** when ready. Clicking the already
-selected run preserves edits. Successful calculations scroll to the results;
-calculation errors also appear beside the setup controls.
+**Configuration**
 
-Expression bars are anchored at **1×**: upregulation rises above the baseline and
-downregulation descends below it. Values remain on the fold-change scale, with
-biological points and SD unchanged. SVG exports use the same bar origin.
+| Variable | Purpose |
+|---|---|
+| `QPCR_DATA_DIR`, `QPCR_UPLOAD_DIR` | Database and upload folders. Default: `backend/data` and `backend/uploads` in a checkout. The `qpcr-workbench` launcher sets them from `--data-dir`. |
+| `QPCR_CORS_ORIGINS` | Comma-separated origins allowed to call the API from another address. Empty by default, so other websites cannot read local data. |
+| `QPCR_BACKEND_URL` | API address that the Vite development server forwards to. Default: `http://127.0.0.1:8000`. |
+| `VITE_API_ROOT` | Build-time API address for deployments that serve the API separately. Requires a matching `QPCR_CORS_ORIGINS`. |
 
-Method 2.1 recognizes conservative water/no-template labels (for example H2O,
-H₂O, H2O_1, H20, water and NTC) as technical controls. These measurements remain
-in the upload and raw plate/table but are excluded before normalization, baseline
-calculation, condition summaries and statistical testing. Review inferred roles
-in sample setup and override misclassifications explicitly. Technical controls
-cannot be biological baselines unless their role is changed. Historical saved
-analyses are preserved; recalculate to apply the updated role policy.
+To open the data of a development checkout with the installed app, run
+`qpcr-workbench --data-dir ~/qpcr-dashboard/backend`.
 
-## Workbook dashboard and publication figures
+**Project layout**
 
-**Set up analysis** contains run selection and reference/baseline choices;
-**Plate & raw data** shows the plate map and raw measurements. The result tabs
-form a separate, filterable workbook overview. Raw Ct
-figures are available immediately, including before normalized analysis exists.
-By default setup analyses every non-reference assay in the selected run; disable
-that option to analyse just one target. Each valid target gets a saved version.
-Targets with incomplete baselines keep their raw Ct panel and an explicit reason
-why normalization could not be calculated.
+| Path | Contents |
+|---|---|
+| `backend/qpcr_engine/` | File parsing, normalization, quality checks and statistics |
+| `backend/app.py` | HTTP API and SQLite storage |
+| `backend/__main__.py` | The `qpcr-workbench` launcher |
+| `frontend/` | React and TypeScript interface (Vite) |
+| `scripts/` | End-to-end browser test |
+| `docs/` | User guide and development roadmap |
 
-The dashboard shows separate target and housekeeping Ct facets, technical-well
-points, biological-sample means and sample SD. Expression figures offer time
-courses and bars originating at 1×. Run, condition-series, time-point and assay
-filters change displayed observations, without recalculating baseline groups or
-pooling runs. Reference/target Ct classification follows the reference selection
-in setup. Instrument omissions and missing measurements are counted; omitted
-numeric measurements can be inspected as crosses and never enter means.
+**Research data.** Research workbooks, PDFs, local databases, uploads and backups
+are excluded by `.gitignore`. Tests that need the private LAD081 workbook are skipped
+when it is absent. Do not force-add research files: removing a file later does not
+remove it from the Git history.
 
-Sample-name suggestions separate a final `.N` biological-replicate label from
-condition and day/hour. LAD081's 100% and 150% series are recognized across days
-0, 21 and 28. The mapping table is editable and persistent. Lines connect
-condition means; suffixes never establish pairing or repeated-measure designs.
-After changing annotations, recalculate to apply them to saved expression
-analyses. The time-axis title is editable for transfection/differentiation or
-another experimental time origin.
+## Releasing
 
-Every figure has a self-contained vector SVG download. **Print / Save PDF** uses
-a clean figure layout. Figure exports include axes, legends, biological n,
-replicate points and uncertainty labels. Colors remain consistent across assay
-panels and filters. Ct axes scale per assay. Normalized figures have links to
-run-specific statistical results and saved-analysis provenance.
+1. Give each colleague read access under **Settings → Collaborators**.
+2. Increase `__version__` in [backend/__init__.py](backend/__init__.py), which is
+   the single source of the version number. Update the wheel file name in this
+   README and in [INSTALL.md](INSTALL.md) to match. A test checks that they agree.
+3. Commit, tag and push:
+   ```bash
+   git tag v0.1.0
+   git push origin main v0.1.0
+   ```
+4. The [checks workflow](.github/workflows/checks.yml) runs the tests, builds the
+   wheel, installs and starts it on Windows and Linux, and publishes it as a GitHub
+   release for the tag.
 
-All-target inferential analyses use one Holm family containing the planned
-assay/condition contrasts for that batch and run, including conservative entries
-for unestimable comparisons. Separate runs/batches are not adjusted together
-automatically. Raw Ct plots are descriptive and never introduce technical-well
-pseudoreplication into the inferential tests.
+Without GitHub Actions, build the wheel locally with `uv build --wheel` (requires
+Node.js; output in `dist/`) and publish it with
+`gh release create v0.1.0 dist/qpcr_workbench-0.1.0-py3-none-any.whl`.
 
-## Review-first upgrade (method 3.0)
+Before a public release, rename the Python package from the generic `backend` to a
+distinctive import name, choose a license, and check the Git history for research
+data.
 
-The default dashboard is now a coverage/QC overview plus one focused assay
-inspector. The heatmap uses log2 of the displayed mean fold change, centered on
-1×; it distinguishes missing, uncalculated and stale results. Select an assay
-for Expression, Target Ct, Reference Ct, QC review or Statistics. Use
-**Figure builder / report** only when you want several panels at once.
+## Roadmap
 
-QC is computed from the original records. Detected technical-control signals
-and technical Ct ranges above an editable default 1-cycle review threshold are
-flagged. These are review prompts, not automatic contamination diagnoses or
-universal acceptance limits. Technical controls remain visible under biological
-time/condition filters. Reviewing a concern requires a note and retains the
-signal. Well exclusions require a reason and a change note; restorations and
-review notes remain in the audit trail. **Preview exclusion effect** compares
-sample normalization before and after proposed exclusions without saving a new
-analysis or changing inferential statistics.
-
-Sample mappings now use a run + sample identity, so the same label can occur on
-multiple runs with different days, units or biological-unit identities. Existing
-name-only annotations are read as legacy defaults; original measurements and
-old analysis versions are not rewritten. Persisted mapping, design and well
-exclusion changes increment an analysis-context revision. Old results are
-marked out of date, and **Recalculate results** creates new versions using saved
-references/baselines and the current persisted context. Unsaved setup edits are
-not silently applied or discarded. The overview selects one coherent settings
-profile per run. Historical profiles remain available in History.
-
-Record the experimental time origin, unit and study design explicitly. Welch
-inference is available only for a confirmed independent-group design and
-researcher-confirmed distribution assumptions. Repeated biological-unit IDs
-within a run block independent inference. Paired, blocked and repeated designs
-currently support descriptive output only. Reference-validation and assay-
-efficiency notes are saved with analyses; Ct exports do not validate them.
-
-Figure presets export 85 mm or 180 mm SVGs with a minimum 8 pt figure font size.
-Automatic time spacing compacts sparse measured times; proportional elapsed time remains selectable. Biological n is shown in the legend.
-Each figure also downloads the actual scoped data as CSV and methods/provenance
-as JSON. Empty figures disable SVG export. Printed panels retain physical size,
-quality/stale labels and readable text. The responsive workspace collapses on
-small screens and can be opened with **Projects / upload**.
-
-Developer checks:
-```bash
-python -m pytest backend/test_app.py backend/test_analysis_v2.py backend/test_review_workflow.py
-npm --prefix frontend test
-npm --prefix frontend run build
-npm --prefix frontend run lint
-python scripts/check_import_browser.py
-```
-The browser regression uses temporary storage and synthetic data by default;
-its optional `--workbook` argument exercises the private LAD081 fixture without
-modifying the user's projects. It checks QC/filter behavior, preview immutability,
-review notes, mapping identity, stale/rebuild state, design gating, exports and
-mobile overflow. Optional live-data reviews should remain read-only unless the
-researcher explicitly requests recalculation or review changes.
-
-## Experiment library and results overview
-
-The home screen lists uploads across projects. Search by experiment, original
-filename, project or instrument run; filter by project, QC concerns or incomplete
-expression analysis, and sort by upload date or name. Dates are explicitly upload
-dates: the importer does not infer an instrument run date from a filename.
-Library sample counts are distinct biological sample instances within each run,
-not wells or inferred independent experimental units. QC and analysis badges are
-computed from the current saved context; partially calculated and outdated
-analyses are identified separately.
-
-**Upload results** opens a focused drawer. Importing immediately opens a raw Ct
-heatmap and assay inspector, before normalization setup. A repeated filename is
-identified before import; importing it still creates a separate experiment.
-**Set up analysis** opens two steps: **Samples & design** (the experimental
-design and editable sample assignments, with search, run filters and bulk edits
-to selected rows) and **Normalization** (run, reference genes, baseline samples
-and calculation). Bulk edits
-remain drafts until **Save sample mapping**. Existing saved expression results
-require recalculation after mapping changes.
-
-The overview switches between raw Ct and normalized expression. Raw heatmap cells
-average technical wells within each sample, then weight samples equally. Omitted
-wells and saved well/sample exclusions do not enter those means. Cells show
-biological sample counts. Clicking a cell retains its run, series and time in the
-inspector. QC has filters for unresolved/reviewed concerns, control signals or
-replicate spread, and sample/assay search. Mobile layouts use experiment cards
-and collapsible result filters; figure/export settings follow the overview.
-
-## All-gene dashboard, time spacing and publication images
-
-**All genes** is a separate tab with a 2–4 column panel grid. Switch between
-normalized expression and raw Ct without leaving the dashboard. Confluency and
-cell-line buttons support individual/multiple selections and **All**. Conservative
-name-based suggestions recognize labelled confluency and the existing HDFn,
-HeLa and AF22 naming conventions; other cell lines appear as **Not annotated**
-until assigned. Edit or bulk-assign both fields in **Samples & design**. These
-filters select observations; saved normalization is not recalculated by a filter.
-
-Time-axis spacing defaults to **Automatic**: bars use evenly spaced measured
-times, and time courses compact when the largest interval is at least 2.5 times
-the smallest. Day labels retain their actual values. **Measured times** and
-**Proportional elapsed time** overrides are available. Figures disclose equal
-spacing and exports record the chosen spacing. The baseline explanation is below
-the plot, outside the bars and points.
-
-Each figure downloads editable **Vector SVG**, a **600 dpi PNG** (including PNG
-physical-resolution metadata), plotted data CSV and methods JSON. PNG dimensions
-are calculated from the 85 mm / 180 mm publication width; SVG remains vector at
-any resolution. Dashboard panels use 85 mm exports. On-screen compact cards trim
-repeated figure notes; those notes remain in SVG, PNG and printed/PDF output.
-**Export dashboard PDF** opens the browser print dialog for vector PDF output.
-Provisional/stale status and biological n remain visible in publication exports.
-
-## Figure customization, pinned genes and saved statistical evidence
-
-Open **Customize figures** to select a palette or set individual series colors.
-Colors apply consistently to points, means, bars, legends and SVG/PNG/PDF exports;
-methods JSON and SVG metadata include the actual colors. In **All genes**, drag a
-panel's **Move** handle onto another panel to reorder. Arrow buttons and arrow
-keys on the handle provide keyboard/touch alternatives. **Undo reorder** restores
-the preceding order, and **Reset plot order** restores alphabetical order. Pin
-frequent genes, use **Pinned genes only**, or search assay names. These preferences
-are stored per experiment in this browser; they do not modify source data,
-analysis settings, revisions or saved result versions.
-
-QC review and Statistics include **Biological distributions & normality**. Dot
-plots show biological-sample ΔCt values; normal probability plots use SciPy's
-`probplot` against theoretical normal quantiles with a fitted reference line.
-Shapiro–Wilk remains a diagnostic, not a rule for selecting an inferential test.
-Groups with fewer than three observations or constant values show an explicit
-not-assessable state. Older snapshots without probability coordinates retain
-their saved data and request a new calculation to add the plot. Diagnostic data
-can be downloaded as JSON, and probability plots as self-contained vector SVGs.
-Biological condition/time filters do not change the saved diagnostic groups.
-Implementation references: [SciPy probability plots](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.probplot.html)
-and [Shapiro–Wilk](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.shapiro.html).
-
-Expression plots show `*` for a current, fully displayed, single-location
-condition whose supported saved independent-group Welch comparison has a
-Holm-adjusted p-value below its recorded alpha. Exact adjusted p-values, biological
-n, baseline n and saved reasons appear under **Statistics** beneath each figure;
-marker notes and full provenance travel with exports. Raw p-values and effect
-threshold crossings never generate markers. Descriptive/unconfirmed analyses,
-filtered subsets, multi-location comparisons and historical results have explicit
-scope/status messages and no current significance marker. Filters never rerun a
-test or change its comparison family. Statistical annotations can be hidden from
-plots without hiding the underlying saved results.
-
-## Figure axes, mark styling and dashboard defaults
-
-Each figure now has a **Settings** button and an **Export** menu. The workspace
-uses compact figure headers and review summaries; repeated figure notes and
-sample color keys expand on demand. Publication SVG/PNG/PDF output retains the
-full labels, legends, scientific notes and status annotations.
-
-In **Settings → Axes**, set automatic/manual X and Y limits, tick intervals,
-axis titles and time spacing. Inputs preview immediately. **Save this plot**
-records only the sections that differ from the dashboard defaults.
-**Apply axes to all expression plots** (or **all Ct plots**) updates that quantity's
-defaults and clears individual axis overrides for it; individual styles remain.
-**Use dashboard settings** removes a plot's overrides. **Reset to automatic**
-clears manual axes. **Cancel preview** or Escape discards the preview. **Undo last appearance change**
-restores the preceding saved appearance without changing analysis history.
-
-**Dashboard appearance & shared scales** offers separate shared/individual Y
-scales for expression and Ct. Shared ranges account for selected assays,
-biological observations and their SD; Ct ranges also retain technical controls.
-Pin/search display choices do not change those ranges. Numeric X limits use
-proportional time, and their time unit is saved. A plot with incompatible time
-units uses an automatic X axis and discloses the fallback. Invalid limits or
-excessively dense tick intervals cannot be saved.
-
-**Settings → Style & colors** assigns colors by condition/run, condition,
-confluency, cell line, run or biological sample. Bar fills, points and bar
-outlines have independent color controls. Advanced sections override individual
-mean bars and individual sample points. Mean bars keep their group meaning;
-sample colors never turn technical wells into biological replicates. Point size,
-filled/hollow points, bar opacity, line/outline width and grid visibility are
-editable. **Apply style to entire dashboard** updates both quantities' defaults
-and clears individual style overrides, while preserving axes.
-
-Manual cropping discloses measurements, uncertainty intervals and a baseline
-outside the visible axes. Clipping does not exclude or recalculate observations.
-Exports include actual limits, styling, color keys and clipping notes; plotted
-data CSV adds `visible_under_axis_limits`. Appearance settings remain local to
-this experiment in this browser and do not create scientific analysis versions.
-
-## Workspace navigation and overview (UI revision, October 2026)
-
-- **Experiments** lists every upload with its **Key changes**: the three genes
-  with the largest fold change in either direction (baseline conditions are never
-  counted). QC counts are grouped findings, the same unit the experiment shows.
-- **Gene explorer** shows one gene across every experiment and run, with time
-  points aligned in columns. Values come from each run's own saved analysis and
-  baseline; runs and experiments are shown side by side, never pooled.
-- Inside an experiment, the tabs are result views only: **Overview**, **All
-  genes**, **Plate & raw data**, **Statistics** and **History**. **Set up
-  analysis** (top right) opens the two setup steps. Before any expression exists,
-  a next-step card points to it while the raw Ct heatmap stays visible.
-- One status line replaces the separate banner, chips and per-cell hatching. Its
-  most urgent item leads with its fix (for example **Recalculate results** when
-  results are out of date); other items follow as links. Out-of-date cells are
-  only marked individually (†) when some results are current and others are not.
-- The heatmap sits directly under one filter bar. It groups columns by condition
-  series and run, labels baseline columns, offers a numeric log₂ color legend
-  (⅛× to 8×) and an optional largest-change-first ordering. Genes without any
-  expression result are listed in a footnote instead of a grey row.
-- Expression figures default to a **log₂ fold-change axis**, so 0.5× and 2× sit
-  equally far from 1×. On this axis the line and whiskers show the geometric
-  mean ×/÷ geometric SD (the mean ± SD of log₂ fold change, i.e. of −ΔΔCt).
-  Heatmap cells, the Gene explorer and Key changes use the same geometric mean,
-  so a baseline condition reads exactly 1×; the Statistics cards keep the
-  arithmetic mean saved with each analysis and say so. A
-  linear axis remains available per plot (**Settings → Y scale**) or for the
-  whole dashboard (**Dashboard appearance → Expression axis**). Exports record
-  the scale and summary statistic.
-- QC flags with one likely cause (same run, sample and kind) form one finding,
-  for example "H2O · signal in 9 assays". A finding has two actions: **Save
-  exclusions** (the audit note is composed from the per-well reasons; restoring
-  a well asks why) and **Mark as reviewed** (one note for every flag in the
-  finding).
-- **Plate & raw data** shows the full plate coloured by Ct (darker = lower Ct)
-  for any assay, and marks technical-control signals, open QC findings,
-  undetermined and omitted wells. The raw measurement table and import warnings
-  live here.
-
-## Figure design and dashboard styling
-
-- **Marks.** Each condition shows a filled marker for its summary (geometric mean
-  on a log₂ axis, otherwise the mean) with whiskers on the same position, and
-  lighter circles for the biological samples around it. Raw Ct figures add the
-  technical wells as faint dots. Bars from 1× sit side by side per series and
-  never overlap.
-- **Axes.** Log₂ ticks read as fold changes (⅛×, ¼×, ½×, 1×, 2×, …). The range
-  follows the data with a small margin, always includes 1× and labels at least
-  two powers of two. Time is drawn to scale by default (tick labels are days or
-  hours); equal spacing is used only when neighbouring time points would
-  collide, for bars, or when chosen in **Settings**. The y title names the
-  baseline, for example "Fold change vs Day 0".
-- **Legends.** Time courses with up to four series and a constant n are labelled
-  at the line ends and state n once; otherwise a legend sits above the plot.
-- **Grids.** In **All genes** and the **Figure builder / report**, panels show
-  data only. One legend and key above the grid give the series, axes, summary
-  statistic and (in the report) references and result status. Genes without any
-  saved result are listed under the grid. **Same y-axis for all genes** shares
-  one range. Every panel's **Export** still produces the complete figure with
-  title, legend and notes.
-- **Inspector.** The figure sits next to a readout of the plotted numbers per
-  series and time point (fold change ×/÷ SD or Ct ± SD, and n), with the
-  references, baseline, result status and open QC findings for that gene.
-- **Figure style** (Figure size, style & export): **Screen** uses light
-  gridlines and open axes; **Journal** uses Arial, closed thin axes, outward
-  ticks and no gridlines. Both keep all text at 8 pt or more at 85 mm and apply
-  to the screen and every export.
-- **Heatmap.** A tight grid with solid colors and two significant figures
-  (exact values in the tooltip). n appears once per column; cells mark only a
-  different n. Raw Ct uses darker = lower Ct, matching the plate map, with the
-  scale fitted to the visible values.
-- **Header.** Experiments can be renamed (**Rename**; the uploaded file name is
-  kept as provenance and the rename is audited). A summary line lists assays,
-  runs, samples, the largest increase and decrease, and open QC findings.
-- The interface uses the bundled Inter typeface (`@fontsource-variable/inter`),
-  so it no longer depends on fonts installed on the computer.
+Planned work includes database migrations with automatic backups, cross-experiment
+comparisons and optional hosted accounts. See
+[docs/upgrade-plan.md](docs/upgrade-plan.md).

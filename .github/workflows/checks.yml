@@ -1,0 +1,100 @@
+name: Checks and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Tests and wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Frontend dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - name: Frontend lint and tests
+        working-directory: frontend
+        run: |
+          npm run lint
+          npm test
+      - name: Build the wheel (compiles the frontend into it)
+        run: uv build --wheel
+      - name: Tag matches the package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: test -f "dist/qpcr_workbench-${GITHUB_REF_NAME#v}-py3-none-any.whl"
+      - name: Backend tests
+        run: |
+          uv venv --python 3.11
+          uv pip install -e '.[dev]'
+          .venv/bin/python -m pytest -q
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel
+          path: dist/*.whl
+          if-no-files-found: error
+
+  smoke:
+    name: Install and start (${{ matrix.os }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheel
+          path: dist
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Install as INSTALL.md describes
+        run: |
+          uv tool install --python 3.11 dist/*.whl
+          uv tool dir --bin >> "$GITHUB_PATH"
+      - name: Start, load the interface and store data outside the installation
+        run: |
+          qpcr-workbench --version
+          qpcr-workbench --no-browser --port 8765 --data-dir smoke-data > server.log 2>&1 &
+          for _ in $(seq 60); do curl -fs http://127.0.0.1:8765/api/health && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8765/api/health || { cat server.log; exit 1; }
+          curl -fsS http://127.0.0.1:8765/ | grep -q 'id="root"'
+          test -f smoke-data/data/qpcr.db
+          qpcr-workbench --no-browser --port 8765 | grep -q 'already running'
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheel
+          path: dist
+      - name: Attach the wheel to a release for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" dist/*.whl
+          --repo "$GITHUB_REPOSITORY"
+          --title "qPCR Analysis Workbench $GITHUB_REF_NAME"
+          --generate-notes

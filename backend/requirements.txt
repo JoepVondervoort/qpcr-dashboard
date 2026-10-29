@@ -1,8 +1,0 @@
-fastapi
-uvicorn[standard]
-python-multipart
-pydantic
-openpyxl
-pytest
-httpx
-scipy>=1.11,<2

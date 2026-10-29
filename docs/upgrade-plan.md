@@ -15,7 +15,7 @@ pooling and paired/repeated-measure models remain planned.
 
 Implemented locally: grouped baseline biological samples; editable suggested conditions and common-reference/day-zero suggestions; required-reference completeness; sample exclusions with reasons; sample SD; biological condition charts; adjustable hit threshold; normality diagnostics; explicitly confirmed independent Welch comparisons with Holm correction; clickable statistics explanation; saved analysis versions, input hashes and snapshot JSON exports. Existing saved analyses are retained during initialization.
 
-Still planned: per-measurement exclusion/QC workflow, protocol-specific positive-control evaluation, paired/repeated/factorial statistical models, cross-experiment history comparisons, immutable candidate registry, single-launcher distribution and hosted private accounts. Analysis history currently compares saved snapshots by inspection, not experiments numerically.
+Still planned: per-measurement exclusion/QC workflow, protocol-specific positive-control evaluation, paired/repeated/factorial statistical models, cross-experiment history comparisons, immutable candidate registry and hosted private accounts. Single-launcher distribution is in place; see section 4. Analysis history currently compares saved snapshots by inspection, not experiments numerically.
 
 ## Product decisions
 
@@ -32,7 +32,7 @@ Still planned: per-measurement exclusion/QC workflow, protocol-specific positive
 
 ## Evidence from the current application and workbook
 
-The importer reads 560 measurements from Sheet1, no warnings: two 384-well runs with 280 measurements each, ten assays, six biological sample labels and H2O per run. Runs correspond to 100% and 150% confluency. Headers are on rows 48 and 380; records occupy rows 49–328 and 381–660. Keep run identities and source coordinates.
+The importer reads 560 measurements from Sheet1, no warnings: two 384-well runs with 280 measurements each, ten assays, six biological sample labels and H2O per run. Runs correspond to 100% and 150% confluency. Headers are on rows 48 and 380; records occupy rows 49 to 328 and 381 to 660. Keep run identities and source coordinates.
 
 The ACTA1 calculation tab averages four technical measurements per biological sample. Its baseline cells average the two day-zero Delta Ct values separately for each confluency (`AE2=AVERAGE(Y2,Y6)` and `AE4=AVERAGE(Y26,Y30)`). The current app uses one baseline sample, so it cannot reproduce that baseline-group behavior.
 
@@ -65,7 +65,7 @@ Raw measurements are immutable. Exclude/restore measurements or biological sampl
 5. Separate effect threshold, replicate agreement, QC status and statistical evidence. Below-threshold does not mean no biological effect; missing is not zero; not tested is not nonsignificant.
 6. Perform inferential comparisons on biological-sample Delta Ct (or explicitly modelled contrasts), not technical measurements or raw fold changes. Preserve control variability in comparisons rather than treating the estimated baseline as a known constant.
 7. Establish independent versus paired/block/repeated-measure design before test selection. Same replicate suffix across conditions is insufficient evidence of pairing. LAD081 needs confirmation whether time points come from independent harvested cultures or a shared experimental block.
-8. Provide Q–Q/residual diagnostics and Shapiro–Wilk where appropriate. Shapiro requires at least three observations. A nonsignificant normality result does not establish normality, particularly at small n. For paired designs assess differences; for fitted models assess residuals. Do not pool unrelated conditions merely to reach a normality-test minimum.
+8. Provide Q-Q/residual diagnostics and Shapiro-Wilk where appropriate. Shapiro requires at least three observations. A nonsignificant normality result does not establish normality, particularly at small n. For paired designs assess differences; for fitted models assess residuals. Do not pool unrelated conditions merely to reach a normality-test minimum.
 9. Initial supported comparisons: independent two-group Welch t-test under stated distribution assumptions; paired t-test for confirmed pairs under assumptions on differences; independent multi-treatment/control Dunnett under its normality/equal-variance assumptions, or pre-specified Welch contrasts with Holm correction where justified. Nonparametric or permutation alternatives require their own design/exchangeability assumptions and explicit estimand; do not use them as an automatic cure for small n.
 10. Correct within a declared family of comparisons; record alpha, sidedness, family, adjustment and method. Default two-sided alpha 0.05. Show biological n, exclusions, effect estimates and confidence intervals when justified, raw and adjusted p-values, assumptions and limitations.
 11. With n=2, show normality as not assessable and a small-sample limitation. Do not present an automatically chosen test as validated. If a researcher explicitly selects a defensible assumption-based exploratory test, label its assumptions and preserve that decision. Complex factorial/repeated/mixed designs need a separately validated model; offer descriptive results and an export until supported.
@@ -101,6 +101,7 @@ Raw measurements are immutable. Exclude/restore measurements or biological sampl
 - Automated repository checks build the frontend, test scientific calculations and migrations, and build the distributable. Pin/review dependencies for reproducible releases.
 - Acceptance: install, launch, upgrade and uninstall/reinstall preserve user data; backup round-trip works; no upload occurs in local mode. Updating code must not recalculate saved results automatically.
 - Limitation: each user upgrades their own installation. This does not provide automatic central rollout or synchronized accounts/sharing.
+- Status (0.1.0): the `qpcr-workbench` launcher serves the built interface and API at one loopback address and stores data in `~/.qpcr-workbench`. Cross-origin requests and other host names are refused. The CI workflow is set up to build wheels, smoke-test them on Windows and Linux, and attach them to GitHub releases. It has not run yet. INSTALL.md covers the wheel route. Install, upgrade over the top, and uninstall were verified to preserve data. Remaining: database migrations with pre-migration backup, in-app version display, and backup/export/import inside the app. Also remaining: a GitHub install route (it currently needs Node.js to build the interface) and renaming the `backend` import package before any public index release.
 
 ### 5. Hosted accounts when needed
 
@@ -117,7 +118,7 @@ These do not block independent implementation work: whether LAD081 biological sa
 
 - Local saRNA Designer README and INSTALL.md: installable local browser app and explicit `uv tool upgrade sarna-designer` update workflow.
 - MIQE checklist: https://www.gene-quantification.de/miqe.html
-- SciPy Shapiro–Wilk requirements: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.shapiro.html
+- SciPy Shapiro-Wilk requirements: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.shapiro.html
 - SciPy independent/Welch t-test: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.ttest_ind.html
 - SciPy Dunnett test: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.dunnett.html
 - Render free service limitations: https://render.com/docs/free

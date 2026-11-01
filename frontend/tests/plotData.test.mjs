@@ -1,10 +1,7 @@
-import {readFileSync} from 'node:fs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import ts from 'typescript'
-const source=readFileSync(new URL('../src/plotData.ts',import.meta.url),'utf8')
-const {outputText}=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext}})
-const moduleExports=await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
+import {loadTs} from './loadTs.mjs'
+const moduleExports=await loadTs('plotData')
 const {suggestedMetadata,latestAnalyses,mean,sampleSD}=moduleExports
 test('recognizes time and condition series without conflating replicate and day',()=>{
   const a=suggestedMetadata('LAD081_HDFn_confluency_100% day 0.1'),b=suggestedMetadata('LAD081_HDFn_confluency_100% day 28.2')

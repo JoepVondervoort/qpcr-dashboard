@@ -20,7 +20,8 @@ def instances(records, legacy=None, overrides=None):
     result = {}
     for row in records:
         name = str(row['sample']); key = sample_instance_id(str(row.get('run_id','')), name)
-        value = {**infer_sample_metadata(name), **(legacy or {}).get(name, {}), **(overrides or {}).get(key, {})}
+        inferred = {k: v for k, v in infer_sample_metadata(name).items() if k != 'name_check'}
+        value = {**inferred, **(legacy or {}).get(name, {}), **(overrides or {}).get(key, {})}
         value.setdefault('biological_unit_id', '')
         value.setdefault('cell_line', None)
         value.setdefault('confluency', None)
@@ -29,17 +30,36 @@ def instances(records, legacy=None, overrides=None):
     return result
 
 
+def name_checks(records, legacy=None, overrides=None) -> dict[str, str]:
+    """Suggestions read from unusual sample names that nobody has saved yet; the scientist should confirm them."""
+    checks = {}
+    for row in records:
+        name = str(row['sample']); key = sample_instance_id(str(row.get('run_id','')), name)
+        if key in checks or key in (overrides or {}) or name in (legacy or {}):
+            continue
+        check = infer_sample_metadata(name).get('name_check')
+        if check and not is_technical_control(name):
+            checks[key] = check
+    return checks
+
+
 def canonical_hash(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str, separators=(',', ':')).encode()).hexdigest()
+
+
+def quality_flag_id(kind: str, run: str, sample: str, assay: str, plate: str | None = None) -> str:
+    # Runs that were never combined keep the identity their saved review decisions use.
+    return canonical_hash([kind, run, sample, assay] if plate is None else [kind, run, plate, sample, assay])
 
 
 def assess_quality(records, exclusions=None, decisions=None, spread_threshold=1.0, roles=None):
     exclusions = exclusions or {}; decisions = decisions or {}; roles = roles or {}
     grouped = defaultdict(list)
     for row in records:
-        grouped[(row.get('run_id',''),row['sample'],row['assay'])].append(row)
+        # Plates combined into one run are reviewed separately: a control on one plate says nothing about another.
+        grouped[(row.get('run_id',''),row.get('plate'),row['sample'],row['assay'])].append(row)
     flags=[]
-    for (run,sample,assay), rows in grouped.items():
+    for (run,plate,sample,assay), rows in grouped.items():
         key=sample_instance_id(run,sample)
         technical = roles.get(key, 'technical_control' if is_technical_control(sample) else 'biological') == 'technical_control'
         # Control signals cannot be erased by excluding their wells from calculations.
@@ -47,10 +67,10 @@ def assess_quality(records, exclusions=None, decisions=None, spread_threshold=1.
         eligible=[r for r in detected if measurement_id(r) not in exclusions]
         kind = 'control_signal' if technical and detected else 'technical_spread' if not technical and len(eligible)>1 and max(r['ct'] for r in eligible)-min(r['ct'] for r in eligible)>spread_threshold else None
         if not kind: continue
-        flag_id=canonical_hash([kind,run,sample,assay])
+        flag_id=quality_flag_id(kind,run,sample,assay,plate)
         review=decisions.get(flag_id)
         span=max((r['ct'] for r in eligible),default=0)-min((r['ct'] for r in eligible),default=0)
-        flags.append({'id':flag_id,'kind':kind,'run_id':run,'sample':sample,'sample_instance_id':key,'assay':assay,
+        flags.append({'id':flag_id,'kind':kind,'run_id':run,'plate':plate,'sample':sample,'sample_instance_id':key,'assay':assay,
           'message': f"Detected signal in technical control ({len(detected)}/{len(rows)} wells). Inspect instrument output and sample assignment; cause is not inferred." if technical else f"Technical Ct range {span:.3f} cycles exceeds review threshold {spread_threshold:g}.",
           'range':span if not technical else None,'status':'reviewed' if review else 'needs_review','review':review,
           'measurements':[{**r,'measurement_id':measurement_id(r),'excluded_reason':exclusions.get(measurement_id(r))} for r in rows]})

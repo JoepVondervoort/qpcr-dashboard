@@ -3,7 +3,7 @@ import type { StatisticalResult } from './StatisticsPanel'
 export type SampleMetadata = { cell_line?: string|null; confluency?: string|null; condition: string; series: string; timepoint: number | null; time_unit: 'day' | 'hour'; replicate: string; biological_unit_id?: string; role?: 'biological'|'technical_control'|null }
 
 export type ExperimentDesign = {time_origin: string; design_type: 'unknown'|'independent'|'paired'|'blocked'|'repeated'; experimental_unit: string; confirmed: boolean; reference_validation_note: string; efficiency_note: string}
-export type QualityFlag = {id:string; kind:'control_signal'|'technical_spread'; run_id:string; sample:string; sample_instance_id:string; assay:string; message:string; range:number|null; status:'needs_review'|'reviewed'; review?:{reason:string;at:string}; measurements:(RawRecord & {excluded_reason?:string})[]}
+export type QualityFlag = {id:string; kind:'control_signal'|'technical_spread'; run_id:string; plate?:string|null; sample:string; sample_instance_id:string; assay:string; message:string; range:number|null; status:'needs_review'|'reviewed'; review?:{reason:string;at:string}; measurements:(RawRecord & {excluded_reason?:string})[]}
 export type Quality = {flags:QualityFlag[];unresolved_count:number;reviewed_count:number;spread_threshold:number;policy:string}
 export type QualityChange = {decisions?:Record<string,{reason:string}>;measurement_exclusions?:Record<string,string>;spread_threshold?:number;note?:string}
 export type RawRecord = {
@@ -20,6 +20,8 @@ export type RawRecord = {
   reporter?: string | null
   sheet: string
   row_number: number
+  /** Instrument plate within a combined run. */
+  plate?: string
 }
 
 export type Run = {
@@ -29,6 +31,9 @@ export type Run = {
   header_row: number
   record_count: number
   plate_size: number | null
+  source_file?: string
+  /** Present when several plates were combined into this run. */
+  plates?: {name:string;sheet:string;header_row:number;record_count:number;plate_size:number|null;source_file?:string}[]
 }
 
 export type SampleRow = {
@@ -48,7 +53,12 @@ export type SampleRow = {
   fold_change: number | null
   log2fc: number | null
   result_status: string
+  target_wells?: WellCount
+  reference_wells?: Record<string, WellCount>
 }
+
+export type WellCount = {detected: number; total: number}
+export type DetectionNote = WellCount & {sample: string; assay: string; role: 'target'|'reference'}
 
 export type AnalysisResult = {
   run_id: string
@@ -66,6 +76,10 @@ export type AnalysisResult = {
   technical_control_samples?: string[]
   technical_control_measurement_count?: number
   baseline_samples?: string[]
+  /** The baseline actually used; a later time point when the target was not detected at the chosen one. */
+  effective_baseline_samples?: string[]
+  baseline_note?: string | null
+  detection_notes?: DetectionNote[]
   sample_groups?: Record<string, string>
   excluded_samples?: string[]
   exclusion_reasons?: Record<string, string>
@@ -94,6 +108,8 @@ export type Experiment = {
   status: string
   context_revision?: number
   sample_instances?: Record<string,SampleMetadata>
+  /** Suggestions read from unusual sample names that the scientist has not confirmed yet. */
+  name_checks?: Record<string,string>
   experiment_design?: ExperimentDesign
   measurement_exclusions?: Record<string,string>
   quality?: Quality
@@ -102,7 +118,7 @@ export type Experiment = {
   raw_records?: RawRecord[]
   sample_roles?: Record<string, string>
   sample_metadata?: Record<string, SampleMetadata>
-  parsed_summary?: { record_count?: number; warnings?: string[]; runs?: Run[] }
+  parsed_summary?: { record_count?: number; warnings?: string[]; runs?: Run[]; files?: string[] }
   analysis_result?: AnalysisResult
 }
 

@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from xml.sax.saxutils import escape
 from zipfile import BadZipFile
 
@@ -24,8 +24,9 @@ from backend.qpcr_engine import import_qpcr_file, summarize_results
 from backend.qpcr_engine.sample_roles import is_technical_control
 from backend.qpcr_engine.sample_metadata import infer_sample_metadata, analysis_group
 from backend.qpcr_engine.statistics import holm
-from backend.qpcr_engine.review import sample_instance_id, measurement_id, instances, assess_quality, canonical_hash
+from backend.qpcr_engine.review import sample_instance_id, measurement_id, instances, assess_quality, canonical_hash, name_checks, quality_flag_id
 from backend.qpcr_engine.library import condition_results
+from backend.qpcr_engine.plates import add_plates_to_run, check_new_plates, combine_all
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("QPCR_DATA_DIR", str(BASE_DIR / "data")))
@@ -237,6 +238,10 @@ def analysis_context(experiment: dict[str, Any], payload: AnalysisRequest, *, al
       'qc_summary':{k:v for k,v in qc.items() if k!='flags'}}
 
 
+def run_sample_metadata(records: list[dict[str, Any]], annotations: dict[str, Any], run_id: str) -> dict[str, dict[str, Any]]:
+    return {r["sample"]: annotations[sample_instance_id(run_id, r["sample"])] for r in records if r.get("run_id") == run_id}
+
+
 def serialize_json(value: Any) -> str:
     return json.dumps(value, default=str)
 
@@ -290,7 +295,7 @@ def library_summary(experiment: sqlite3.Row, conn: sqlite3.Connection) -> dict[s
         "assay_count": len({r["assay"] for r in records}),
         "biological_sample_count": sum(a.get("role") != "technical_control" for a in annotations.values()),
         "unresolved_count": quality["unresolved_count"],
-        "unresolved_findings": len({(f["kind"], f["run_id"], f["sample"]) for f in quality["flags"] if f["status"] == "needs_review"}),
+        "unresolved_findings": len({(f["kind"], f["run_id"], f.get("plate"), f["sample"]) for f in quality["flags"] if f["status"] == "needs_review"}),
         "reviewed_count": quality["reviewed_count"],
         "design_confirmed": bool(metadata.get("experiment_design", {}).get("confirmed")),
         "analysis_state": "needs_recalculation" if outdated else "partial" if selected and incomplete else "saved" if selected else "not_calculated",
@@ -349,29 +354,100 @@ def create_project(payload: dict[str, str]) -> dict[str, Any]:
     return {"id": project_id, "name": project_name, "created_at": now, "updated_at": now}
 
 
+def _discard(stored: list[dict[str, Any]]) -> None:
+    for item in stored:
+        item["path"].unlink(missing_ok=True)
+
+
+async def _store_uploads(uploads: list[UploadFile]) -> list[dict[str, Any]]:
+    """Keep a copy of every upload and parse it. If any file fails, none of them is kept."""
+    stored: list[dict[str, Any]] = []
+    try:
+        for upload in uploads:
+            original = upload.filename or "upload.csv"
+            destination = UPLOAD_DIR / f"{uuid.uuid4()}{Path(original).suffix}"
+            destination.write_bytes(await upload.read())
+            stored.append({"name": original, "path": destination})
+            try:
+                parsed = import_qpcr_file(str(destination), display_name=original)
+            except (ValueError, BadZipFile) as error:
+                raise ValueError(f"{original}: {error}") from error
+            except Exception as error:  # A damaged workbook can make a reader fail in unexpected ways.
+                raise ValueError(f"{original} could not be read. Export it again, or save it as .xlsx or .csv.") from error
+            if not parsed["record_count"]:
+                explanation = " ".join(parsed["warnings"])
+                raise ValueError(f"No raw Ct/Cq measurements were found in {original}. {explanation} Upload the results file that the qPCR software exported for each plate, not a workbook assembled by hand.")
+            stored[-1]["parsed"] = parsed
+    except (OSError, ValueError) as error:
+        _discard(stored)
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except BaseException:
+        _discard(stored)
+        raise
+    return stored
+
+
+def _check_plates_per_file(existing_runs: list[dict[str, Any]], stored: list[dict[str, Any]]) -> None:
+    """A plate may not repeat across files or the experiment; one export may repeat a run name, as before."""
+    seen = list(existing_runs)
+    for item in stored:
+        check_new_plates(seen, item["parsed"]["runs"])
+        seen += item["parsed"]["runs"]
+
+
+def _merge_parsed(stored: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    several = len(stored) > 1
+    records = [record for item in stored for record in item["parsed"]["records"]]
+    runs = [run for item in stored for run in item["parsed"]["runs"]]
+    warnings = [f"{item['name']}: {warning}" if several else warning for item in stored for warning in item["parsed"]["warnings"]]
+    return records, runs, warnings
+
+
+def _source_files(stored: list[dict[str, Any]], added_at: str) -> list[dict[str, str]]:
+    return [{"name": item["name"], "stored_name": item["path"].name, "added_at": added_at} for item in stored]
+
+
+def _role_checker(records: list[dict[str, Any]], metadata: dict[str, Any]):
+    """Saved sample roles where they exist, name-based suggestions for new plates."""
+    annotations = instances(records, metadata.get("sample_metadata", {}), metadata.get("sample_instances", {}))
+
+    def is_control(record: dict[str, Any]) -> bool:
+        saved = annotations.get(sample_instance_id(str(record.get("run_id", "")), record["sample"]))
+        return (saved or {}).get("role") == "technical_control" if saved else is_technical_control(record["sample"])
+    return is_control
+
+
+def _plate_scoped_decisions(decisions: dict[str, Any], records: list[dict[str, Any]], run: dict[str, Any]) -> dict[str, Any]:
+    """QC findings of a run become findings of its first plate once other plates join it."""
+    pairs = {(r["sample"], r["assay"]) for r in records if r.get("run_id") == run["id"] and not r.get("plate")}
+    moves = {quality_flag_id(kind, run["id"], sample, assay): quality_flag_id(kind, run["id"], sample, assay, run["name"])
+             for sample, assay in pairs for kind in ("control_signal", "technical_spread")}
+    return {moves.get(key, key): value for key, value in decisions.items()}
+
+
 @app.post("/api/projects/{project_id}/upload")
-async def upload_experiment(project_id: str, file: UploadFile = File(...), name: str = Form("")) -> dict[str, Any]:
+async def upload_experiment(project_id: str, file: Annotated[UploadFile | None, File()] = None, name: Annotated[str, Form()] = "",
+                            files: Annotated[list[UploadFile] | None, File()] = None, combine: Annotated[bool, Form()] = False) -> dict[str, Any]:
+    """Import one or more plates as one experiment; with combine, all plates form one analysis run."""
     with get_db() as conn:
         project = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    uploads = [*([file] if file else []), *(files or [])]
+    if not uploads:
+        raise HTTPException(status_code=422, detail="Choose at least one results file.")
 
-    safe_name = (name or file.filename or "Imported qPCR experiment").strip() or "Imported qPCR experiment"
-    stored_name = safe_name
-    file_extension = Path(file.filename or "upload.csv").suffix
-    unique_name = f"{uuid.uuid4()}{file_extension}"
-    destination = UPLOAD_DIR / unique_name
-    contents = await file.read()
-    destination.write_bytes(contents)
-
+    stored = await _store_uploads(uploads)
     try:
-        parsed = import_qpcr_file(str(destination))
-        if not parsed["record_count"]:
-            explanation = " ".join(parsed["warnings"])
-            raise ValueError(f"No raw Ct/Cq measurements were found. {explanation} Upload the original instrument export; this workbook layout may need a separate mapping step.")
-    except (OSError, ValueError, BadZipFile) as error:
-        destination.unlink(missing_ok=True)
+        records, runs, warnings = _merge_parsed(stored)
+        _check_plates_per_file([], stored)
+        if combine:
+            records, runs = combine_all(records, runs, lambda record: is_technical_control(record["sample"]))
+    except ValueError as error:
+        _discard(stored)
         raise HTTPException(status_code=422, detail=str(error)) from error
+    stored_name = (name or stored[0]["name"] or "Imported qPCR experiment").strip() or "Imported qPCR experiment"
+    file_names = [item["name"] for item in stored]
     experiment_id = str(uuid.uuid4())
     now = utc_now()
 
@@ -387,20 +463,14 @@ async def upload_experiment(project_id: str, file: UploadFile = File(...), name:
                 experiment_id,
                 project_id,
                 stored_name,
-                file.filename,
-                str(destination),
+                stored[0]["name"],
+                str(stored[0]["path"]),
                 now,
                 "uploaded",
-                serialize_json(parsed["records"]),
-                serialize_json(
-                    {
-                        "record_count": parsed["record_count"],
-                        "warnings": parsed["warnings"],
-                        "runs": parsed["runs"],
-                    }
-                ),
+                serialize_json(records),
+                serialize_json({"record_count": len(records), "warnings": warnings, "runs": runs, "files": file_names}),
                 serialize_json({}),
-                serialize_json({"source": parsed["file_name"], "warnings": parsed["warnings"]}),
+                serialize_json({"source": stored[0]["name"], "warnings": warnings, "source_files": _source_files(stored, now)}),
             ),
         )
 
@@ -408,11 +478,62 @@ async def upload_experiment(project_id: str, file: UploadFile = File(...), name:
         "id": experiment_id,
         "project_id": project_id,
         "name": stored_name,
-        "original_filename": file.filename,
-        "record_count": parsed["record_count"],
-        "runs": parsed["runs"],
-        "warnings": parsed["warnings"],
+        "original_filename": stored[0]["name"],
+        "files": file_names,
+        "record_count": len(records),
+        "runs": runs,
+        "warnings": warnings,
     }
+
+
+@app.post("/api/projects/{project_id}/experiments/{experiment_id}/plates")
+async def add_plates(project_id: str, experiment_id: str, files: Annotated[list[UploadFile], File()],
+                     combine_into: Annotated[str, Form()] = "") -> dict[str, Any]:
+    """Add plates that arrived later: as new runs, or as plates of an existing run (combine_into)."""
+    get_experiment(project_id, experiment_id)
+    stored = await _store_uploads(files)
+    try:
+        with get_db() as conn:
+            # Read after the upload and write in the same transaction, so reviews saved meanwhile are kept.
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT original_filename, raw_records, parsed_summary, metadata FROM experiments WHERE project_id = ? AND id = ?",
+                               (project_id, experiment_id)).fetchone()
+            if row is None:
+                raise ValueError("This experiment no longer exists.")
+            records, summary, metadata = _merge_plates(row, stored, combine_into)
+            conn.execute("UPDATE experiments SET raw_records = ?, parsed_summary = ?, metadata = ? WHERE id = ? AND project_id = ?",
+                         (serialize_json(records), serialize_json(summary), serialize_json(metadata), experiment_id, project_id))
+    except ValueError as error:
+        _discard(stored)
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return get_experiment(project_id, experiment_id)
+
+
+def _merge_plates(row: sqlite3.Row, stored: list[dict[str, Any]], combine_into: str) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    records = read_json_column(row["raw_records"]) or []
+    summary = read_json_column(row["parsed_summary"]) or {}
+    metadata = read_json_column(row["metadata"]) or {}
+    runs = summary.get("runs", [])
+    new_records, new_runs, warnings = _merge_parsed(stored)
+    _check_plates_per_file(runs, stored)
+    decisions = metadata.get("qc_decisions", {})
+    if combine_into:
+        target = next((run for run in runs if run["id"] == combine_into), None)
+        if target is None:
+            raise ValueError("The run to combine with is not part of this experiment.")
+        decisions = _plate_scoped_decisions(decisions, records, target)
+        merged, merged_runs = add_plates_to_run(records, runs, combine_into, new_records, new_runs, _role_checker(records, metadata))
+    else:
+        merged, merged_runs = [*records, *new_records], [*runs, *new_runs]
+    now = utc_now()
+    file_names = [item["name"] for item in stored]
+    event = {"at": now, "action": "plates_added", "files": file_names, "plates": [run["name"] for run in new_runs], "combined_into": combine_into or None}
+    updated_metadata = {**metadata, "qc_decisions": decisions, "context_revision": metadata.get("context_revision", 0) + 1,
+                        "source_files": [*metadata.get("source_files", []), *_source_files(stored, now)],
+                        "audit_events": [*metadata.get("audit_events", []), event]}
+    updated_summary = {**summary, "record_count": len(merged), "runs": merged_runs, "warnings": [*summary.get("warnings", []), *warnings],
+                       "files": [*summary.get("files", [row["original_filename"]] if row["original_filename"] else []), *file_names]}
+    return merged, updated_summary, updated_metadata
 
 
 @app.get("/api/projects/{project_id}/experiments")
@@ -458,6 +579,7 @@ def get_experiment(project_id: str, experiment_id: str) -> dict[str, Any]:
         "created_at": row["created_at"],
         "raw_records": [{**r, 'measurement_id':measurement_id(r), 'sample_instance_id':sample_instance_id(r.get('run_id',''),r['sample'])} for r in records],
         "sample_instances": annotations,
+        "name_checks": name_checks(records, metadata.get('sample_metadata',{}), metadata.get('sample_instances',{})),
         "quality": quality,
         "context_revision": metadata.get('context_revision',0),
         "input_sha256": hashlib.sha256(row['raw_records'].encode()).hexdigest(),
@@ -498,6 +620,7 @@ def analyze_experiment(
             hit_threshold=payload.hit_threshold,
             statistics_method=payload.statistics_method,
             assumptions_confirmed=payload.assumptions_confirmed,
+            sample_metadata=run_sample_metadata(records, context["sample_instances"], payload.run_id),
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -548,7 +671,8 @@ def analyze_batch(project_id: str, experiment_id: str, payload: BatchAnalysisReq
                 baseline_sample=payload.baseline_sample, baseline_samples=payload.baseline_samples, run_id=payload.run_id,
                 sample_groups=payload.sample_groups, excluded_samples=payload.excluded_samples,
                 technical_control_samples=payload.technical_control_samples, excluded_measurements=context["excluded_measurements"], hit_threshold=payload.hit_threshold,
-                statistics_method=payload.statistics_method, assumptions_confirmed=payload.assumptions_confirmed)
+                statistics_method=payload.statistics_method, assumptions_confirmed=payload.assumptions_confirmed,
+                sample_metadata=run_sample_metadata(records, context["sample_instances"], payload.run_id))
             summaries.append(summary)
         except ValueError as error:
             failures.append({"target_assay": target, "reason": str(error)})
@@ -685,7 +809,8 @@ def preview_well_exclusions(project_id:str,experiment_id:str,payload:WellPreview
     try:
         result=summarize_results(experiment['raw_records'],target_assay=request.target_assay,reference_assays=request.reference_assays,
           baseline_sample=request.baseline_sample,baseline_samples=request.baseline_samples,run_id=request.run_id,sample_groups=request.sample_groups,
-          excluded_samples=request.excluded_samples,technical_control_samples=request.technical_control_samples,excluded_measurements=context['excluded_measurements'],hit_threshold=request.hit_threshold)
+          excluded_samples=request.excluded_samples,technical_control_samples=request.technical_control_samples,excluded_measurements=context['excluded_measurements'],hit_threshold=request.hit_threshold,
+          sample_metadata=run_sample_metadata(experiment['raw_records'],context['sample_instances'],request.run_id))
     except ValueError as error:raise HTTPException(status_code=422,detail=str(error)) from error
     return {'current':current,'preview':result,'saved':False,'note':'Descriptive normalization preview only; no statistical inference or saved analysis is changed.'}
 
@@ -767,6 +892,9 @@ def export_csv(project_id: str, experiment_id: str) -> StreamingResponse:
         "delta_delta_ct",
         "fold_change",
         "log2fc",
+        "result_status",
+        "target_wells_detected",
+        "target_wells_total",
     ])
     for sample in result.get("samples", []):
         writer.writerow([
@@ -785,6 +913,9 @@ def export_csv(project_id: str, experiment_id: str) -> StreamingResponse:
             sample.get("delta_delta_ct"),
             sample.get("fold_change"),
             sample.get("log2fc"),
+            sample.get("result_status"),
+            (sample.get("target_wells") or {}).get("detected"),
+            (sample.get("target_wells") or {}).get("total"),
         ])
     contents = output.getvalue().encode("utf-8")
     return StreamingResponse(iter([contents]), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{row["name"]}.csv"'})

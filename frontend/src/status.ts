@@ -1,7 +1,7 @@
 export type StatusLevel='action'|'review'|'info'
-export type StatusItem={id:'stale'|'qc'|'design'|'draft'|'confounded'|'roles';level:StatusLevel;text:string}
+export type StatusItem={id:'stale'|'qc'|'names'|'design'|'draft'|'confounded'|'roles';level:StatusLevel;text:string}
 export type DashboardStatus={level:StatusLevel|'ok';headline:string;leadId?:StatusItem['id'];items:StatusItem[]}
-export type StatusInput={staleCount:number;resultCount:number;qcFindings:number;designConfirmed:boolean;draftDirty:boolean;confounded:boolean;mixedRoles:string[]}
+export type StatusInput={staleCount:number;resultCount:number;qcFindings:number;nameChecks?:number;designConfirmed:boolean;draftDirty:boolean;confounded:boolean;mixedRoles:string[]}
 
 const rank:Record<StatusLevel,number>={action:0,review:1,info:2}
 const plural=(count:number,word:string)=>`${count} ${word}${count===1?'':'s'}`
@@ -11,6 +11,7 @@ export function dashboardStatus(input:StatusInput):DashboardStatus {
  const candidates:(StatusItem|false)[]=[
   input.staleCount>0&&{id:'stale',level:'action',text:input.staleCount>=input.resultCount?'Results are out of date: samples, design or QC changed after they were calculated.':`${input.staleCount} of ${input.resultCount} results are out of date.`},
   input.qcFindings>0&&{id:'qc',level:'review',text:`${plural(input.qcFindings,'QC finding')} to review`},
+  (input.nameChecks??0)>0&&{id:'names',level:'review',text:`${plural(input.nameChecks!,'sample name')} read with a guess: check time points and conditions`},
   !input.designConfirmed&&{id:'design',level:'review',text:'Study design not confirmed, so results are provisional'},
   input.draftDirty&&{id:'draft',level:'info',text:'Unsaved setup changes'},
   input.confounded&&{id:'confounded',level:'info',text:'Conditions were measured on separate runs; differences may include run effects'},

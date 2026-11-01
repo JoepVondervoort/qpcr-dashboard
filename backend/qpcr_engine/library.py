@@ -15,7 +15,8 @@ def condition_results(result: dict[str, Any], annotations: dict[str, Any], run_n
     """
     run = result.get("run_id", "")
     groups = result.get("sample_groups") or {}
-    baseline = set(result.get("baseline_samples") or ([result["baseline_sample"]] if result.get("baseline_sample") else []))
+    # A target that is not detected at the chosen baseline is normalized to a later time point instead.
+    baseline = set(result.get("effective_baseline_samples") or result.get("baseline_samples") or ([result["baseline_sample"]] if result.get("baseline_sample") else []))
     saved_annotations = result.get("sample_instances") or {}
     members: dict[str, list[dict[str, Any]]] = {}
     for row in result.get("samples", []):

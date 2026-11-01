@@ -11,8 +11,10 @@ anywhere.
 
 ## Features
 
-- Imports CSV and Excel (XLSX/XLSM) result exports, including QuantStudio workbooks
-  that contain several instrument runs.
+- Imports CSV and Excel (XLSX/XLSM and legacy XLS) result exports, including
+  QuantStudio workbooks that contain several instrument runs.
+- Analyzes an experiment spread over several plates as one run with a shared
+  baseline, or keeps the plates as separate runs. Plates can be added later.
 - Shows raw Ct values as a heatmap, plate map and table immediately after import.
 - Normalizes target genes to one or more reference genes and a group of baseline
   samples, separately for each run.
@@ -75,8 +77,9 @@ copy the folder. The workbench only accepts connections from your own computer.
 ## Using the workbench
 
 1. **Import.** Choose **Upload results**, name the project and select an instrument
-   export. The raw Ct overview opens straight away. Each instrument run in the file
-   is kept separate.
+   export, or several plate files of one experiment. The raw Ct overview opens
+   straight away. Each instrument run is kept separate unless you combine plates
+   into one run.
 2. **Describe the samples.** Open **Set up analysis** and check the suggested
    conditions, time points and biological replicates under **Samples & design**.
    Save the sample mapping.
@@ -103,9 +106,12 @@ reported correctly. The [user guide](docs/user-guide.md) gives the full details.
   Ct means. Under the usual equal-efficiency assumption, this equals the geometric
   mean of their quantities. Every selected reference gene must be present for a
   sample to receive a normalized result.
-- The baseline is the mean ΔCt of all selected baseline biological samples.
-- Instrument runs are never pooled, and biological replicates are not combined
-  automatically.
+- The baseline is the mean ΔCt of all selected baseline biological samples. A target
+  that is not detected in every baseline sample is normalized to the first later
+  time point where it is, and the figure says so.
+- Instrument runs are never pooled unless you combine their plates into one run,
+  and a sample's wells are never pooled across plates. Biological replicates are
+  not combined automatically.
 - No-template controls (for example H2O, water and NTC) are recognized and excluded
   from normalization and statistics. They remain visible in the raw data.
 - Expression figures use a log₂ fold-change axis by default and show the geometric

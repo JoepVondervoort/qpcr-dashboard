@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from openpyxl import load_workbook
+from .workbooks import SheetRows, read_xls, read_xlsx
 
 
 def normalize_key(value: Any) -> str:
@@ -104,6 +104,9 @@ def _parse_rows(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     sections: list[tuple[int, dict[str, int], str, int | None]] = []
     for index, row in enumerate(rows):
+        # A result header names at least four columns; skipping numeric rows keeps raw-curve sheets fast.
+        if sum(isinstance(value, str) for value in row) < 4:
+            continue
         columns = _header_columns(list(row))
         if not {"well_position", "sample", "assay", "ct"}.issubset(columns):
             continue
@@ -221,35 +224,28 @@ def _parse_rows(
                 "header_row": header_index + 1,
                 "record_count": run_records,
                 "plate_size": plate_size,
+                "source_file": source_file,
             }
         )
 
     return records, runs, warnings
 
 
-def _import_csv(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+def _import_csv(path: Path, file_name: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     with path.open("r", newline="", encoding="utf-8-sig") as file:
         reader = csv.reader(file)
         rows = [tuple(row) for row in reader]
+    stem = Path(file_name).stem
     return _parse_rows(
         rows,
-        path.stem,
-        path.name,
-        default_run=path.stem,
+        stem,
+        file_name,
+        default_run=stem,
         is_workbook=False,
     )
 
 
-def _import_workbook(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
-    workbook = load_workbook(path, read_only=True, data_only=True)
-    try:
-        worksheet_rows = [
-            (sheet.title, [tuple(row) for row in sheet.iter_rows(values_only=True)])
-            for sheet in workbook.worksheets
-        ]
-    finally:
-        workbook.close()
-
+def _import_workbook(worksheet_rows: SheetRows, file_name: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     all_candidates: list[
         tuple[str, list[dict[str, Any]], list[dict[str, Any]], list[str]]
     ] = []
@@ -257,8 +253,8 @@ def _import_workbook(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, A
         records, runs, warnings = _parse_rows(
             rows,
             sheet_name,
-            path.name,
-            default_run=path.stem,
+            file_name,
+            default_run=Path(file_name).stem,
             is_workbook=True,
         )
         if runs:
@@ -278,18 +274,22 @@ def _import_workbook(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, A
     return records, runs, warnings
 
 
-def import_qpcr_file(path: str) -> dict[str, Any]:
+def import_qpcr_file(path: str, display_name: str | None = None) -> dict[str, Any]:
+    """Parse one export. display_name is the user's file name when the upload is stored under another name."""
     file_path = Path(path)
+    file_name = display_name or file_path.name
     suffix = file_path.suffix.lower()
     if suffix == ".csv":
-        records, runs, warnings = _import_csv(file_path)
+        records, runs, warnings = _import_csv(file_path, file_name)
     elif suffix in {".xlsx", ".xlsm"}:
-        records, runs, warnings = _import_workbook(file_path)
+        records, runs, warnings = _import_workbook(read_xlsx(file_path), file_name)
+    elif suffix == ".xls":
+        records, runs, warnings = _import_workbook(read_xls(file_path), file_name)
     else:
-        raise ValueError(f"Unsupported file type: {suffix}. Use CSV, XLSX, or XLSM.")
+        raise ValueError(f"Unsupported file type: {suffix}. Use CSV, XLSX, XLSM or XLS.")
 
     return {
-        "file_name": file_path.name,
+        "file_name": file_name,
         "records": records,
         "runs": runs,
         "record_count": len(records),

@@ -4,6 +4,7 @@ from collections import defaultdict
 from statistics import mean, stdev
 import math
 
+from .baseline import resolve_baseline
 from .statistics import summarize_groups
 from .sample_roles import is_technical_control
 from .review import measurement_id
@@ -20,6 +21,29 @@ def _sd(values: list[float]) -> float | None:
     return float(stdev(values)) if len(values) > 1 else None
 
 
+def _well_counts(records: list[dict[str, Any]], excluded_wells: dict[str, str]) -> dict[tuple[str, str], dict[str, int]]:
+    """Detected versus eligible wells per sample and assay; undetermined wells count as eligible."""
+    counts: dict[tuple[str, str], dict[str, int]] = defaultdict(lambda: {"detected": 0, "total": 0})
+    for record in records:
+        if record.get("omit", False) or measurement_id(record) in excluded_wells:
+            continue
+        key = (str(record["sample"]), str(record["assay"]))
+        detected = record.get("ct") is not None and math.isfinite(float(record["ct"])) and str(record.get("status", "detected")).lower() == "detected"
+        counts[key] = {"detected": counts[key]["detected"] + detected, "total": counts[key]["total"] + 1}
+    return counts
+
+
+def _detection_notes(samples: list[str], target: str, references: list[str], counts: dict[tuple[str, str], dict[str, int]]) -> list[dict[str, Any]]:
+    """Samples whose mean rests on only some of their technical wells."""
+    notes = []
+    for sample in samples:
+        for assay, role in [(target, "target"), *((reference, "reference") for reference in references)]:
+            wells = counts.get((sample, assay), {"detected": 0, "total": 0})
+            if 0 < wells["detected"] < wells["total"]:
+                notes.append({"sample": sample, "assay": assay, "role": role, **wells})
+    return notes
+
+
 def summarize_results(
     raw_records: list[dict[str, Any]],
     target_assay: str,
@@ -34,6 +58,7 @@ def summarize_results(
     excluded_samples: list[str] | None = None,
     technical_control_samples: list[str] | None = None,
     excluded_measurements: dict[str, str] | None = None,
+    sample_metadata: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not target_assay:
         raise ValueError("Select a target assay.")
@@ -48,7 +73,6 @@ def summarize_results(
         raise ValueError("The hit threshold must be finite and positive.")
     if len(set(reference_assays)) != len(reference_assays):
         raise ValueError("Reference assays must be unique.")
-    baseline_sample = "; ".join(baselines)
     excluded = set(excluded_samples or [])
     if excluded.intersection(baselines):
         raise ValueError("Baseline samples cannot also be excluded.")
@@ -103,6 +127,7 @@ def summarize_results(
     for record in run_records:
         if record.get("ct") is not None and math.isfinite(float(record["ct"])) and not record.get("omit", False) and measurement_id(record) not in excluded_wells:
             grouped[(str(record["sample"]), str(record["assay"]))].append(record)
+    counts = _well_counts(run_records, excluded_wells)
 
     def assay_values(sample: str, assay: str) -> list[float]:
         return [
@@ -133,6 +158,8 @@ def summarize_results(
             else None
         )
         return {
+            "target_wells": counts.get((sample, target_assay), {"detected": 0, "total": 0}),
+            "reference_wells": {assay: counts.get((sample, assay), {"detected": 0, "total": 0}) for assay in reference_assays},
             "target_ct_values": target_values,
             "target_ct_mean": target_mean,
             "target_ct_sd": _sd(target_values),
@@ -142,18 +169,19 @@ def summarize_results(
             "delta_ct": delta_ct,
         }
 
-    baseline_values = [sample_steps(sample)["delta_ct"] for sample in baselines]
-    if any(value is None for value in baseline_values):
-        raise ValueError("Every baseline sample needs detected, non-excluded target and ALL selected reference assays.")
-    baseline_delta_ct = mean(baseline_values)
+    steps_by_sample = {sample: sample_steps(sample) for sample in dict.fromkeys([*all_samples, *baselines])}
+    baseline = resolve_baseline(target_assay, baselines, steps_by_sample, all_samples, sample_metadata)
+    baseline_delta_ct = mean(steps_by_sample[sample]["delta_ct"] for sample in baseline.samples)
+    baseline_label = "; ".join(baseline.samples)
 
     rows: list[dict[str, Any]] = []
     for sample in all_samples:
-        steps = sample_steps(sample)
+        steps = steps_by_sample[sample]
         delta_ct = steps["delta_ct"]
+        before_baseline = sample in baseline.before
         ddct = (
             delta_ct - baseline_delta_ct
-            if delta_ct is not None
+            if delta_ct is not None and not before_baseline
             else None
         )
         if ddct is not None and (not math.isfinite(ddct) or abs(ddct) > 1000):
@@ -165,20 +193,25 @@ def summarize_results(
                 "target_assay": target_assay,
                 "reference_assays": reference_assays,
                 **steps,
-                "baseline_sample": baseline_sample,
+                "baseline_sample": baseline_label,
                 "baseline_delta_ct": baseline_delta_ct,
                 "delta_delta_ct": ddct,
                 "fold_change": 2 ** (-ddct) if ddct is not None else None,
                 "log2fc": -ddct if ddct is not None else None,
-                "result_status": "complete" if ddct is not None else "missing_measurement",
+                "result_status": "before_baseline" if before_baseline else "complete" if ddct is not None else "missing_measurement",
             }
         )
 
     biological_groups = {s: g for s, g in (sample_groups or {}).items() if s not in technical and s not in excluded}
-    statistics = summarize_groups(rows, biological_groups, baselines, hit_threshold, statistics_method, assumptions_confirmed)
+    # Time points before a later baseline keep their condition in the saved setup but have no fold change to test.
+    tested_groups = {s: g for s, g in biological_groups.items() if s not in baseline.before}
+    statistics = summarize_groups(rows, tested_groups, baseline.samples, hit_threshold, statistics_method, assumptions_confirmed)
     return {
-        "method_version": "3.0",
+        "method_version": "3.1",
         "baseline_samples": baselines,
+        "effective_baseline_samples": baseline.samples,
+        "baseline_note": baseline.note,
+        "detection_notes": _detection_notes(all_samples, target_assay, reference_assays, counts),
         "sample_groups": biological_groups,
         "excluded_samples": sorted(excluded),
         "excluded_measurements": excluded_wells,
@@ -189,7 +222,7 @@ def summarize_results(
         "run_id": run_id,
         "target_assay": target_assay,
         "reference_assays": reference_assays,
-        "baseline_sample": baseline_sample,
+        "baseline_sample": baseline_label,
         "baseline_delta_ct": baseline_delta_ct,
         "reference_method": "Arithmetic mean of reference-assay Ct means",
         "excluded_measurement_count": sum(

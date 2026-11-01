@@ -1,13 +1,13 @@
 import type { SampleMetadata, AnalysisResult } from './types'
+import {findTime,splitReplicate,withoutTime} from './timeTokens'
 
 export const mean = (values: number[]) => values.length ? values.reduce((a,b) => a+b,0)/values.length : null
 export const sampleSD = (values: number[]) => values.length > 1 ? Math.sqrt(values.reduce((sum,x) => sum + (x-mean(values)!)**2,0)/(values.length-1)) : null
 export function suggestedMetadata(sample: string): SampleMetadata {
-  const replicate = sample.match(/\.(\d+)$/)
-  const condition = replicate ? sample.slice(0,replicate.index) : sample
-  const time = condition.match(/\b(days?|dpt|d|hours?|hrs?|h)\s*(-?\d+(?:\.\d+)?)\b/i)
-  return {condition, replicate: replicate?.[1] ?? '', series: time ? condition.replace(time[0],'').replace(/[ _-]+$/,'').trim() : condition,
-    timepoint: time ? Number(time[2]) : null, time_unit: time?.[1].toLowerCase().startsWith('h') ? 'hour' : 'day'}
+  const {condition,replicate} = splitReplicate(sample)
+  const time = findTime(condition)
+  return {condition, replicate, series: time ? withoutTime(condition,time) || condition : condition,
+    timepoint: time ? time.value : null, time_unit: time?.unit ?? 'day'}
 }
 export function seriesLabel(series: string) {
   const confluency = series.match(/confluency[_\s]*(\d+)%/i)
@@ -40,8 +40,10 @@ export function coherentAnalyses(results:AnalysisResult[]):AnalysisResult[] {
 }
 
 export function analysisGroup(m:SampleMetadata):string {
- if(m.timepoint==null)return m.condition.trim()
- const base=m.condition.replace(/\b(days?|dpt|d|hours?|hrs?|h)\s*-?\d+(?:\.\d+)?\b/ig,'').replace(/^[ _·-]+|[ _·-]+$/g,'')
+ const condition=m.condition.trim()
+ if(m.timepoint==null)return condition
+ const time=findTime(condition)
+ const base=(time?withoutTime(condition,time):condition).replace(/^[ _·-]+|[ _·-]+$/g,'')
  return `${base||m.series} · ${m.time_unit==='hour'?'Hour':'Day'} ${m.timepoint}`
 }
 

@@ -1,5 +1,5 @@
 import {useState} from 'react'
-import type {AnalysisResult,RawRecord,SampleMetadata} from './types'
+import type {AnalysisResult,RawRecord,SampleMetadata,SampleRow} from './types'
 import {sampleAnnotation,sampleKey,mean,categoryLabel,seriesLabel} from './plotData'
 import {ctColor,ctDomain,foldColor,foldLabel,groupColumns,legendGradient,legendTicks,sortRows,textOn,typicalN,type GeneOrder} from './heatmapLayout'
 export type Availability={run:string;assay:string;result?:AnalysisResult;reason:string;stale:boolean;reference?:boolean}
@@ -29,14 +29,16 @@ export function OverviewHeatmap({records,annotations,targets,availability,onInsp
    const value=mean(means)
    return {column,value,n:means.length,item,label:value==null?'No detected Ct':`${value.toFixed(1)} Ct`,display:value==null?'—':value.toFixed(1)}
   }
-  const values=result?.samples.flatMap(row=>{
-   const m=sampleAnnotation(result.sample_instances??result.sample_metadata,column.run,row.sample)
-   const match=m.series===column.series&&m.timepoint===column.time&&m.time_unit===column.unit&&(m.timepoint!=null||m.condition===column.condition)
-   return includedSamples.has(sampleKey(column.run,row.sample))&&match&&row.fold_change!=null&&row.fold_change>0&&result.sample_groups?.[row.sample]?[row.fold_change]:[]
-  })??[]
+  const inCell=(row:SampleRow)=>{
+   const m=sampleAnnotation(result!.sample_instances??result!.sample_metadata,column.run,row.sample)
+   return includedSamples.has(sampleKey(column.run,row.sample))&&m.series===column.series&&m.timepoint===column.time&&m.time_unit===column.unit&&(m.timepoint!=null||m.condition===column.condition)
+  }
+  const values=result?.samples.flatMap(row=>inCell(row)&&row.fold_change!=null&&row.fold_change>0&&result.sample_groups?.[row.sample]?[row.fold_change]:[])??[]
+  // Time points before a later baseline (target not detected at the chosen one) are not normalized.
+  const beforeBaseline=Boolean(result?.samples.some(row=>row.result_status==='before_baseline'&&inCell(row)))
   // Geometric mean, 2^(mean log2 FC): matches the log2 figures, and a baseline reads exactly 1×.
   const logMean=mean(values.map(Math.log2)),value=logMean==null?null:2**logMean
-  const label=item?.reference?'Reference':value!=null?foldLabel(value):item?.result?'Missing samples':item?.reason?.startsWith('Not calculated')?'Not calculated':'Unavailable'
+  const label=item?.reference?'Reference':value!=null?foldLabel(value):beforeBaseline?'Before the first time point where it was detected':item?.result?'Missing samples':item?.reason?.startsWith('Not calculated')?'Not calculated':'Unavailable'
   return {column,value,n:values.length,item,label,display:item?.reference?'ref':value!=null?foldLabel(value):'—'}
  }
 

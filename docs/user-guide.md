@@ -18,27 +18,51 @@ Analysis Workbench. For installation, see [INSTALL.md](../INSTALL.md).
 
 ## 1. Importing data
 
-**Supported files.** CSV and XLSX/XLSM files that contain Ct/Cq results. Ct values
-are not called from fluorescence curves.
+**Supported files.** CSV, XLSX/XLSM and legacy XLS files that contain Ct/Cq
+results, as exported by the qPCR software for each plate. Ct values are not called
+from fluorescence curves. Workbooks assembled by hand, such as a lab notebook with
+Ct tables copied from several plates, are not imported: they lack the run
+information that keeps plates apart. Upload the original export of each plate
+instead.
 
 **QuantStudio workbooks.** The importer reads the instrument result sections that
 carry run metadata and skips derived calculation tabs. Repeated result sections are
 kept as separate runs. The LAD081 example workbook imports as 560 measurements in
 two 384-well runs of 280 measurements each; its per-gene calculation tabs are not
-used as input. The importer has been verified on this layout only. A file with an
-unsupported layout produces an error message rather than an empty experiment.
+used as input. QuantStudio 5 exports saved in the older XLS format (for example the
+LAD080 plates) import the same way; their amplification and melt-curve tabs are not
+used. A file with an unsupported layout produces an error message rather than an
+empty experiment.
 
 **Measurement states.** Undetermined, missing, invalid and instrument-omitted
 measurements stay distinguishable after import. The plate map uses the 96-well or
 384-well format when the export states it.
 
 **Importing.** Choose **Upload results** (or **Upload your first results** in an
-empty workspace), enter a project name, select the file and choose
+empty workspace), enter a project name, select one or more files and choose
 **Create project and import**. The workbench detects the instrument runs and opens
 the raw Ct overview straight away, before any analysis setup. Run cards switch
 between runs without combining their measurements. If a file with the same name was
 imported before, you are told so; importing it again creates a separate experiment.
-The original file is stored unchanged.
+The original files are stored unchanged.
+
+**Experiments on several plates.** When an experiment does not fit on one plate,
+select all its plate files together. Under **Plates**, choose:
+
+- **Separate runs**: each plate is normalized to baseline samples on that same plate.
+- **One combined run**: the plates form one run that shares one baseline, for
+  example when day 0 is on one plate and days 21 and 28 are on another. Each
+  sample's ΔCt still uses the target and reference wells of its own plate; only the
+  baseline comes from another plate. Plates are compared directly, without
+  inter-run calibration, so plate-to-plate differences are part of the result.
+
+Plates that arrive later are added with **Add plates** below the experiment title,
+either as a separate run or into an existing run. Saved results become out of date
+until you recalculate. The plate a measurement came from is kept: the plate map has
+a plate selector, and QC findings are reviewed per plate. Two safeguards apply. A
+plate that is already in the experiment is refused. Plates are not combined when the
+same biological sample is measured for the same assay on both, because that would
+pool its wells across plates; keep such plates as separate runs.
 
 ## 2. Experiments and the Gene explorer
 
@@ -71,6 +95,17 @@ number, separate from the condition and the day or hour. The LAD081 100% and 150
 series are recognized across days 0, 21 and 28. Confluency and the HDFn, HeLa and
 AF22 cell-line naming conventions are recognized; other cell lines appear as
 **Not annotated** until you assign them.
+
+Time points are read from spellings such as `day 0`, `Day21`, `d7`, `72h` and
+`48 hpt`, and also when the day is attached with an underscore (`_day0`,
+`__day21`). Names without a time point, as in experiments measured on a single
+day, stay conditions without a time axis. A label after the replicate number, as
+in `day 21.2 RS`, is read as part of the condition: replicate 2 of "… RS" at day 21,
+a series separate from the samples without the label.
+
+Suggestions read from such unusual spellings are marked **check**, and the status
+line asks you to look at them. Correct anything that is wrong, then choose
+**Confirm suggestions** or save the mapping. Saving a row counts as confirming it.
 
 The mapping table can be searched, filtered by run and edited in bulk for selected
 rows. Edits remain a draft until you choose **Save sample mapping**.
@@ -107,6 +142,20 @@ analyze a single target gene. Each target with a valid result is saved as its ow
 analysis version. A target whose baseline is incomplete keeps its raw Ct panel,
 with the reason normalization was not possible.
 
+**Targets not detected at the baseline.** Some genes are not expressed at the
+baseline, for example a neuronal marker in day-0 fibroblasts. When a target is not
+detected in every baseline sample, the workbench normalizes it to the first later
+time point of the same series at which it is detected in every sample. Earlier time
+points get no fold change for that gene. The figure, its readout and its exports
+say which baseline was used and why. This needs time points in the sample mapping;
+without them, or when no later time point qualifies, the target is reported as not
+normalizable. A missing reference gene at the baseline is never handled this way.
+
+**Partly detected wells.** When only some technical wells of a sample are detected,
+its mean uses the detected wells. The readout beside the figure lists these samples
+under **Wells**, and the plotted-data export includes the detected and total well
+counts.
+
 **Calculation**
 
 - Technical wells are averaged within each biological sample. They do not increase
@@ -121,7 +170,8 @@ with the reason normalization was not possible.
 - The baseline is the mean ΔCt of all selected baseline biological samples. This
   differs from normalizing to a single baseline sample.
 - Measurements from different runs are never combined, and biological replicates
-  are not pooled automatically.
+  are not pooled automatically. Plates are only analyzed together when you combine
+  them into one run, and a sample's wells are never pooled across plates.
 - Assay efficiencies are not estimated or applied. Notes on reference-gene
   validation and assay efficiency can be saved with an analysis.
 
@@ -140,9 +190,10 @@ flagged:
 These flags are prompts for review. They are not automatic contamination diagnoses
 or universal acceptance limits.
 
-Flags that share one likely cause (same run, sample and type) are grouped into a
-single finding, for example "H2O · signal in 9 assays". Each finding has two
-actions:
+Flags that share one likely cause (same run, plate, sample and type) are grouped
+into a single finding, for example "H2O · signal in 9 assays". In a combined run,
+each plate's controls form their own finding, such as "H2O on LAD080_3 · signal in
+10 assays". Each finding has two actions:
 
 - **Save exclusions** excludes the selected wells. Each well needs a reason, and the
   audit note is composed from them. Restoring a well asks for a reason as well.

@@ -17,6 +17,8 @@ import {NormalizationStep} from './NormalizationStep'
 import {PlateView} from './PlateView'
 import {StatisticsView} from './StatisticsView'
 import {UploadPanel} from './UploadPanel'
+import {AddPlatesPanel} from './AddPlatesPanel'
+import {defaultLabel,experimentFiles,withoutExtension} from './plates'
 
 const API_ROOT = (import.meta.env.VITE_API_ROOT ?? '').replace(/\/$/, '')
 const RESULT_TABS = [['dashboard', 'Overview'], ['genes', 'All genes'], ['plate', 'Plate & raw data'], ['statistics', 'Statistics'], ['history', 'History']] as const
@@ -48,7 +50,8 @@ function App() {
   const [selectedRunId, setSelectedRunId] = useState('')
   const [projectName, setProjectName] = useState('My qPCR project')
   const [uploadName, setUploadName] = useState('')
-  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploadFiles, setUploadFiles] = useState<File[]>([])
+  const [combinePlates, setCombinePlates] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const [status, setStatus] = useState('')
   const [analysisConfig, setAnalysisConfig] = useState({
@@ -79,6 +82,7 @@ function App() {
   const [backendIssue, setBackendIssue] = useState('Checking backend compatibility…')
   const [importing, setImporting] = useState(false)
   const shouldScrollToResults = useRef(false)
+  const openExperiment = useRef('')
 
   const configureRun=useCallback((experiment:Experiment,runId:string,history:{id:string;created_at:string;result:AnalysisResult}[]=[],restore=false)=>{
     setAnalysisError('')
@@ -93,7 +97,9 @@ function App() {
     const controls = experiment.sample_instances ? samples.filter(name=>sampleAnnotation(experiment.sample_instances,runId,name).role==='technical_control') : saved?.technical_control_samples ?? samples.filter(name => sampleAnnotation(experiment.sample_instances,runId,name).role === 'technical_control' || (!experiment.sample_instances&&experiment.sample_roles?.[name] === 'technical_control'))
     setTechnicalSamples(controls)
     setBaselineSamples(saved?.baseline_samples ?? (saved?.baseline_sample ? [saved.baseline_sample] : samples.filter(name => sampleAnnotation(experiment.sample_instances,runId,name).timepoint === 0 || /day 0\.\d+$/i.test(name))))
-    setSampleGroups(saved?.sample_groups ?? Object.fromEntries(samples.map(name => [name, controls.includes(name) ? '' : analysisGroup(sampleAnnotation(experiment.sample_instances,runId,name))])))
+    const suggestedGroups = Object.fromEntries(samples.map(name => [name, controls.includes(name) ? '' : analysisGroup(sampleAnnotation(experiment.sample_instances,runId,name))]))
+    // Samples added to the run after its last analysis (a later plate) start from their suggested condition.
+    setSampleGroups(saved?.sample_groups ? {...suggestedGroups, ...saved.sample_groups} : suggestedGroups)
     setExcludedSamples(saved?.exclusion_reasons ?? {})
     setHitThreshold(saved?.hit_threshold ?? 1.5)
     setStatisticsMethod(saved?.statistics?.method??'descriptive')
@@ -141,6 +147,7 @@ function App() {
       : listedExperiment
   const runs = selectedExperiment?.parsed_summary?.runs ?? []
   const selectedRun = runs.find((run) => run.id === selectedRunId) ?? null
+  useEffect(() => { openExperiment.current = activeExperimentId }, [activeExperimentId])
   const runRecords = selectedRun
     ? (selectedExperiment?.raw_records ?? []).filter((record) => record.run_id === selectedRun.id)
     : []
@@ -222,11 +229,11 @@ function App() {
   }
 
   async function addExperiment() {
-    if (!uploadFile || importing) return
-    const file = uploadFile
+    if (!uploadFiles.length || importing) return
     const form = new FormData()
-    form.append('name', uploadName.trim() || file.name.replace(/\.(xlsx|xlsm|csv)$/i,''))
-    form.append('file', file)
+    form.append('name', uploadName.trim() || defaultLabel(uploadFiles.map(file => file.name)))
+    for (const file of uploadFiles) form.append('files', file)
+    form.append('combine', String(uploadFiles.length > 1 && combinePlates))
     setImporting(true)
     setStatus('Importing workbook and detecting instrument runs…')
     try {
@@ -245,7 +252,7 @@ function App() {
         const body = await response.json().catch(() => null)
         throw new Error(apiErrorMessage(body, response.status))
       }
-      const result = await response.json() as { id: string; record_count: number; warnings: string[]; runs: Run[] }
+      const result = await response.json() as { id: string; record_count: number; warnings: string[]; runs: Run[]; files: string[] }
       const data = await apiFetch<Project[]>('/api/projects')
       setProjects(data)
       setSelectedProjectId(projectId)
@@ -254,8 +261,10 @@ function App() {
       setSelectedExperimentId(result.id)
       setActiveTab('dashboard')
       setPage('experiment');setUploadOpen(false)
-      setStatus(`Imported ${result.record_count} measurements from ${result.runs.length} instrument run(s).${result.warnings.length ? ` ${result.warnings.length} import warning(s) are listed under Plate & raw data.` : ''}`)
-      setUploadFile(null)
+      const plates = result.runs.reduce((count, run) => count + (run.plates?.length ?? 1), 0)
+      setStatus(`Imported ${result.record_count} measurements from ${plates} plate(s) in ${result.runs.length} run(s).${result.warnings.length ? ` ${result.warnings.length} import warning(s) are listed under Plate & raw data.` : ''}`)
+      setUploadFiles([])
+      setCombinePlates(false)
       if (fileInput.current) fileInput.current.value = ''
       setUploadName('')
     } catch (error) {
@@ -267,6 +276,24 @@ function App() {
 
   function applyExperiment(value:Experiment) {
     setDetail(value);setSampleInstances(value.sample_instances??{});setSampleMetadata(value.sample_metadata??{})
+  }
+  async function addPlates(files:File[],combineInto:string) {
+    const experimentId=activeExperimentId
+    const path=`/api/projects/${selectedProjectId}/experiments/${experimentId}`
+    const form=new FormData()
+    for(const file of files)form.append('files',file)
+    form.append('combine_into',combineInto)
+    const response=await fetch(`${API_ROOT}${path}/plates`,{method:'POST',body:form})
+    if(!response.ok)throw new Error(apiErrorMessage(await response.json().catch(()=>null),response.status))
+    const value=await response.json() as Experiment
+    void loadProjects()
+    // The scientist may have opened another experiment while the plates were uploading.
+    if(openExperiment.current!==experimentId)return
+    applyExperiment(value)
+    // Keep unsaved setup edits, as switching runs does.
+    if(selectedRunId&&setupEdited)setupDrafts.current[JSON.stringify([experimentId,selectedRunId])]={analysisConfig,baselineSamples,excludedSamples,hitThreshold,statisticsMethod,assumptionsConfirmed}
+    configureRun(value,combineInto||selectedRunId||value.parsed_summary?.runs?.[0]?.id||'',versions)
+    setStatus(`Added ${files.map(file=>file.name).join(', ')}${combineInto?' to the combined run':' as a separate run'}. ${versions.length?'Recalculate results to include the new plate.':'Set up the analysis when you are ready.'}`)
   }
   async function saveAnnotations(values:Record<string,SampleMetadata>) {
     const value=await apiFetch<Experiment>(`/api/projects/${selectedProjectId}/experiments/${activeExperimentId}/sample-instances`,{method:'PATCH',body:JSON.stringify(values)})
@@ -417,7 +444,7 @@ function App() {
       </div>
       {uploadOpen&&<div className="upload-backdrop" onClick={()=>{if(!importing)setUploadOpen(false)}}/>}
       <UploadPanel open={uploadOpen} importing={importing} projects={projects} destination={uploadDestination} onDestination={setUploadDestination}
-        projectName={projectName} onProjectName={setProjectName} label={uploadName} onLabel={setUploadName} file={uploadFile} onFile={setUploadFile}
+        projectName={projectName} onProjectName={setProjectName} label={uploadName} onLabel={setUploadName} files={uploadFiles} onFiles={setUploadFiles} combine={combinePlates} onCombine={setCombinePlates}
         fileInput={fileInput} status={status} onClose={()=>setUploadOpen(false)} onImport={()=>void addExperiment()}/>
 
       <main className="main-panel" inert={uploadOpen}>
@@ -429,11 +456,12 @@ function App() {
         <header className="topbar">
           <div>
             <p className="eyebrow">{selectedProject?.name ?? 'qPCR results'}</p>
-            {selectedExperiment?<ExperimentTitle key={selectedExperiment.id} name={selectedExperiment.name.replace(/\.(xlsx|xlsm|csv)$/i,'')} onRename={renameExperiment}/>:<h2>Import your qPCR results</h2>}
+            {selectedExperiment?<ExperimentTitle key={selectedExperiment.id} name={withoutExtension(selectedExperiment.name)} onRename={renameExperiment}/>:<h2>Import your qPCR results</h2>}
             {selectedExperiment&&<ExperimentSummary experiment={selectedExperiment}/>}
             <p className="helper-text">
-              {selectedExperiment?.parsed_summary?.record_count ?? 0} measurements · file <span title={selectedExperiment?.original_filename}>{selectedExperiment?.original_filename}</span>
+              {selectedExperiment?.parsed_summary?.record_count ?? 0} measurements · {selectedExperiment&&experimentFiles(selectedExperiment).length>1?'files':'file'} <span title={selectedExperiment?experimentFiles(selectedExperiment).join('\n'):undefined}>{selectedExperiment?experimentFiles(selectedExperiment).join(', '):''}</span>
             </p>
+            {selectedExperiment&&loaded&&<AddPlatesPanel key={selectedExperiment.id} runs={runs} onAdd={addPlates}/>}
           </div>
           {selectedExperiment&&<button className={inSetup?'setup-toggle':'setup-toggle quiet-button'} aria-pressed={inSetup} onClick={()=>setActiveTab(hasResults?'setup':'samples')}>Set up analysis</button>}
         </header>

@@ -127,9 +127,10 @@ export function PublicationFigure({title, subtitle, observations, kind, bars=fal
   // Biological n: one value per figure when constant, otherwise per series and visible time point.
   const visibleCounts=summaries.filter(s=>inX(s.category)&&s.n>0).map(s=>s.n)
   const uniformN=visibleCounts.length&&new Set(visibleCounts).size===1?visibleCounts[0]:null
-  const countsFor=(seriesKey:string)=>visibleCategories.map(c=>summaries.find(v=>v.series===seriesKey&&v.category===c.key)?.n??0)
-  const nLabel=(seriesKey:string)=>{const counts=countsFor(seriesKey),low=Math.min(...counts,Infinity),high=Math.max(...counts,0);return low===high||!counts.length?`n = ${counts[0]??0}`:`n = ${low}–${high}`}
-  const nDetails=series.flatMap(s=>{const counts=countsFor(s.key);return new Set(counts).size>1?[`n per time point · ${labelFor(s.label)}: ${visibleCategories.map((c,i)=>`${c.label} ${counts[i]}`).join(', ')}.`]:[]})
+  // Only the categories a series was measured at: a series absent at a time point has no point there, not n = 0.
+  const countsFor=(seriesKey:string)=>visibleCategories.flatMap(c=>{const n=summaries.find(v=>v.series===seriesKey&&v.category===c.key)?.n;return n?[{label:c.label,n}]:[]})
+  const nLabel=(seriesKey:string)=>{const counts=countsFor(seriesKey).map(c=>c.n),low=Math.min(...counts,Infinity),high=Math.max(...counts,0);return low===high||!counts.length?`n = ${counts[0]??0}`:`n = ${low}–${high}`}
+  const nDetails=series.flatMap(s=>{const counts=countsFor(s.key);return new Set(counts.map(c=>c.n)).size>1?[`n per time point · ${labelFor(s.label)}: ${counts.map(c=>`${c.label} ${c.n}`).join(', ')}.`]:[]})
   const lastMean=(seriesKey:string)=>summaries.filter(s=>s.series===seriesKey&&inX(s.category)&&s.mean!=null&&!outside(s.mean)).at(-1)
   // Up to four time-course lines are labelled at their ends; otherwise a legend sits above the plot.
   const directLabels=temporal&&!bars&&!technical&&preset==='double'&&series.length>0&&series.length<=4&&uniformN!=null&&series.every(s=>labelFor(s.label).length<=26&&lastMean(s.key))

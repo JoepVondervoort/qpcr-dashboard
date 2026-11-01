@@ -80,7 +80,7 @@ def test_all_references_required_and_incomplete_baseline_rejected():
     rows = records() + [dict(sample='base.1', assay='R2', ct=21), dict(sample='base.2',assay='R2',ct=21)]
     result = calculate(rows, reference_assays=['R','R2'])
     assert next(r for r in result['samples'] if r['sample']=='drug.1')['fold_change'] is None
-    with pytest.raises(ValueError, match='ALL'):
+    with pytest.raises(ValueError, match=r'drug\.1 have no detected, non-excluded value for reference assay\(s\) R2'):
         calculate(rows, reference_assays=['R','R2'], baseline_samples=['drug.1'])
 
 

@@ -158,14 +158,14 @@ def main() -> None:
                     expect(page.locator('.status-bar')).to_contain_text('Expression saved')
                 page.get_by_label('Inspect assay',exact=True).select_option(target)
                 expect(page.locator('.assay-inspector')).to_be_visible()
-                # A missing run must be visible even while a valid run is plotted.
+                # A target not detected at day 0 is normalized to the first day where it is, and says so.
                 if args.workbook:
                     page.get_by_role('button',name='Inspect GAD65',exact=True).click()
-                    expect(page.locator('.coverage-badges')).to_contain_text('Run 3: unavailable')
-                    expect(page.locator('.figure-coverage-note')).to_contain_text('Run 3 unavailable')
+                    expect(page.locator('.figure-readout .readout-note')).to_contain_text('relative to Day 21')
+                    expect(page.locator('.figure-coverage-note').filter(has_text='not detected in every baseline sample')).to_be_visible()
                     page.get_by_role('button',name='Inspect PAX6',exact=True).click()
                     page.get_by_label('Export PAX6 expression',exact=True).click()
-                    expect(page.get_by_role('button',name='Download PAX6 expression SVG',exact=True)).to_be_disabled()
+                    expect(page.get_by_role('button',name='Download PAX6 expression SVG',exact=True)).to_be_enabled()
                     page.get_by_label('Export PAX6 expression',exact=True).click()
                 page.get_by_role('button',name=f'Inspect {target}',exact=True).click()
                 # Incompatible filters cannot be selected, and QC ignores biological time filters.

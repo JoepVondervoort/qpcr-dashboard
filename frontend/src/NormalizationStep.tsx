@@ -24,8 +24,8 @@ export function NormalizationStep(p:NormalizationProps) {
  const short=(sample:string)=>withoutPrefix(sample,prefix)
  const targets=p.assayOptions.filter(assay=>!p.config.referenceAssays.includes(assay))
  return <section className="setup-step normalization-step">
-  <div className="setup-block"><h4>Instrument run</h4><p className="setup-hint">Each run is normalized on its own; runs are never pooled.</p>
-   <div className="run-cards">{p.runs.map(run=><button key={run.id} aria-pressed={p.selectedRunId===run.id} className="run-card" onClick={()=>p.onSelectRun(run.id)}><strong>{run.name}</strong><span>{run.record_count} measurements · {run.plate_size??'Unknown'}-well</span></button>)}</div></div>
+  <div className="setup-block"><h4>Instrument run</h4><p className="setup-hint">Each run is normalized on its own; runs are never pooled. Plates combined into one run share its baseline.</p>
+   <div className="run-cards">{p.runs.map(run=><button key={run.id} aria-pressed={p.selectedRunId===run.id} className="run-card" onClick={()=>p.onSelectRun(run.id)}><strong>{run.name}</strong><span>{run.record_count} measurements · {run.plates?.length?`${run.plates.length} plates combined`:`${run.plate_size??'Unknown'}-well`}</span></button>)}</div></div>
 
   <div className="setup-block setup-columns">
    <fieldset className="selection-group"><legend>Reference genes <small>{p.config.referenceAssays.length} selected</small></legend><p className="setup-hint">Choose the references your protocol specifies.</p>

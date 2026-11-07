@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import os
+import zipfile
 from pathlib import Path
 from typing import Any, BinaryIO
 
 from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
 
 SheetRows = list[tuple[str, list[tuple[Any, ...]]]]
 
@@ -14,7 +16,11 @@ _OLE2_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
 def read_xlsx(source: Path | BinaryIO) -> SheetRows:
-    workbook = load_workbook(source, read_only=True, data_only=True)
+    try:
+        workbook = load_workbook(source, read_only=True, data_only=True)
+    # A file that is not a zip archive, or a zip without workbook parts (cut off, renamed from another format).
+    except (zipfile.BadZipFile, InvalidFileException, KeyError) as error:
+        raise ValueError("This file could not be read as an Excel file; it may be damaged or saved in another format. Export the results again, or save them as .xlsx or .csv.") from error
     try:
         return [(sheet.title, [tuple(row) for row in sheet.iter_rows(values_only=True)]) for sheet in workbook.worksheets]
     finally:
@@ -38,7 +44,7 @@ def _read_biff(path: Path) -> SheetRows:
     try:
         import xlrd
     except ImportError as error:
-        raise ValueError("Reading .xls files needs the xlrd package, which is missing from this installation. Reinstall the workbench, or save the file as .xlsx.") from error
+        raise ValueError("Reading .xls files needs the xlrd package, which is missing from this installation. The window where the workbench runs shows the command that updates it. Or save the file as .xlsx.") from error
     # Damaged files make xlrd fail in many ways (IndexError, struct.error, ...); all mean the same to the user.
     try:
         with open(os.devnull, "w") as quiet:

@@ -1,5 +1,6 @@
 """Sample-name suggestions describe conditions and time, never statistical pairing."""
 import re
+from collections.abc import Iterable
 from typing import Any, NamedTuple
 
 _NUMBER = r'(-?\d+(?:\.\d+)?)'
@@ -17,6 +18,14 @@ _REPLICATE = re.compile(r'\.(\d+)$', re.ASCII)
 # "day 21.2 RS": a label after the replicate number of a time point belongs to the condition.
 _REPLICATE_THEN_LABEL = re.compile(r'^(.*?(?<![a-z0-9])(?:days?|dpt|d|hours?|hrs?)\s*\d+)\.(\d+)\s+([^\s.][^.]*)$', _FLAGS)
 _SEPARATORS = ' _-'
+# "LNP4_50_1", "Apt 44 1-2", "IMR90 2": a short trailing number may count replicates, or be a dose or a sample
+# number. It is only ever asked about (see suffix_replicates), never applied without the scientist's answer.
+_SUFFIX = re.compile(r'^(.*\S)([_\- ])(\d{1,2})$', re.ASCII)
+MAX_SUFFIX_REPLICATES = 6
+# A stem ending in a time, sequence or date word numbers time points, plates or runs, not replicates:
+# "Week 2", "30 min 1", "T 3", "Plate 2", "Exp 2024-11-05".
+_SEQUENCE_STEM = re.compile(r'(?:(?<![a-z0-9])(?:weeks?|wks?|w|mins?|minutes?|secs?|hours?|hrs?|h|days?|d|t|tp|time\s*points?|'
+                            r'passages?|p|plates?|runs?|batch(?:es)?|lots?|exp(?:eriment)?s?|rounds?|cycles?)|\d{4}[-_]\d{1,2})$', re.I | re.ASCII)
 
 
 class TimeToken(NamedTuple):
@@ -76,6 +85,31 @@ def infer_sample_metadata(name: str) -> dict[str, Any]:
         summary = '; '.join(checks)
         result['name_check'] = f"{summary[0].upper()}{summary[1:]}. Check this suggestion."
     return result
+
+
+def suffix_replicates(names: Iterable[str]) -> dict[str, tuple[str, str, str]]:
+    """Names whose trailing number may be a replicate number: name -> (stem, separator, number).
+
+    A name qualifies only with siblings that share its stem and whose numbers form a short consecutive run,
+    such as "_1, _2" or "_3, _4". Doses ("_50, _100"), sample numbers 1-12 and time points ("day 2") do not.
+    """
+    groups: dict[str, dict[str, tuple[str, str]]] = {}
+    for name in {str(value).strip() for value in names}:
+        match = _SUFFIX.match(name)
+        if not match or _REPLICATE.search(name) or _REPLICATE_THEN_LABEL.match(name):
+            continue
+        time = find_time(name)
+        stem, separator, number = match.groups()
+        if (time and time.end == len(name)) or _SEQUENCE_STEM.search(stem):
+            continue
+        groups[stem] = {**groups.get(stem, {}), name: (separator, number)}
+    found: dict[str, tuple[str, str, str]] = {}
+    for stem, members in groups.items():
+        numbers = sorted(int(number) for _, number in members.values())
+        consecutive = len(set(numbers)) == len(numbers) and numbers[-1] - numbers[0] + 1 == len(numbers)
+        if 2 <= len(numbers) <= MAX_SUFFIX_REPLICATES and consecutive:
+            found.update({name: (stem, separator, number) for name, (separator, number) in members.items()})
+    return found
 
 
 def analysis_group(metadata: dict[str, Any]) -> str:

@@ -1,0 +1,56 @@
+/* Plate layout editor: which sample is in which well. */
+.plate-layout-panel .plate-layout { grid-template-columns:minmax(0,1fr) 320px; }
+.layout-map { user-select:none; touch-action:none; }
+.layout-map .axis-button { min-height:0; padding:0; border:0; border-radius:4px; background:transparent; color:var(--muted); font-size:11px; font-weight:500; cursor:pointer; }
+.layout-map .axis-button:hover { background:#eef1ee; color:var(--accent); }
+.layout-cell { color:#22373c; font-size:9px; font-weight:500; overflow:hidden; line-height:1.1; cursor:cell; background:#fff; }
+.layout-map[data-size="96"] .layout-cell { font-size:10px; }
+.layout-cell[data-unnamed=true] { background:#fff; border:1.5px dashed #b9852f; }
+.layout-cell[data-control=true] { background:#eceeed !important; border-color:#9fb0ad; box-shadow:none; }
+.layout-cell[data-draft=true] { box-shadow:inset 0 0 0 1.5px #176c70a6; }
+.layout-cell[aria-pressed=true] { outline:2px solid #22373c; outline-offset:0; }
+
+.layout-side { display:grid; gap:12px; }
+.layout-tools { display:grid; gap:10px; }
+.layout-tools .segmented { flex-wrap:wrap; height:auto; }
+.layout-tool { display:grid; gap:8px; }
+.layout-tool p { margin:0; color:var(--muted); font-size:12px; line-height:1.5; }
+.layout-tool label { display:grid; gap:4px; font-size:12px; color:var(--muted); }
+.layout-tool textarea { width:100%; box-sizing:border-box; font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; resize:vertical; }
+.layout-tool-row { display:flex; flex-wrap:wrap; gap:8px; align-items:end; }
+.layout-tool-row label { flex:1 1 130px; }
+.layout-tool .check-row { display:flex; gap:8px; align-items:flex-start; line-height:1.4; }
+.layout-tool .check-row input { margin-top:2px; accent-color:var(--accent); }
+.layout-problem { color:var(--rust) !important; }
+.layout-side .mapping-actions { position:static; padding:10px 0 0; }
+
+.layout-checks { list-style:none; display:grid; gap:6px; padding:0; margin:0 0 14px; }
+.layout-checks li { display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; padding:9px 12px; border-radius:8px; background:#f1f6f1; border:1px solid var(--rule); font-size:13px; line-height:1.5; }
+.layout-checks li[data-blocking=true] { background:var(--amber-bg); border-color:#e9ddc6; }
+.layout-checks li span { flex:1 1 360px; }
+
+.layout-summary { margin-top:14px; font-size:13px; }
+.layout-summary summary { cursor:pointer; color:var(--muted); }
+.layout-summary ul { list-style:none; padding:8px 0 0; margin:0; display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:4px 18px; }
+.layout-summary li { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 8px; }
+.layout-summary li .text-button { display:inline-flex; align-items:center; gap:6px; padding:0; background:transparent; color:#22373c; font-weight:500; text-align:left; }
+.layout-summary li i { display:inline-block; width:10px; height:10px; border-radius:50%; border:1px solid #c5d1cd; }
+.layout-summary small { color:var(--muted); font-size:11.5px; }
+.layout-warning { color:var(--amber) !important; }
+
+@media (max-width:1100px) { .plate-layout-panel .plate-layout { grid-template-columns:1fr; } }
+
+/* The workbench's numbering of samples that the export does not name. */
+.sample-numbering > div,.numbered-notice > div { flex:1 1 520px; }
+.sample-numbering ul,.numbered-notice ul { margin:6px 0 0; padding-left:18px; max-width:720px; color:var(--ink-soft); font-size:13px; line-height:1.55; }
+.sample-numbering .question-actions,.numbered-notice .question-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.numbered-notice { border-color:var(--rule); border-left-color:#7fa9a3; background:#fbfcfb; }
+.numbering-doubts li,.next-step .numbering-doubt { color:var(--amber) !important; }
+.rename-pairs { display:grid; gap:2px; max-height:180px; overflow:auto; margin:0; padding:6px 8px; list-style:none; border:1px solid var(--rule); border-radius:6px; font-size:12px; }
+.rename-pairs li { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); gap:8px; }
+.rename-pairs li span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rename-pairs [data-kept=true] { color:var(--muted); font-style:italic; }
+.late-questions { display:grid; gap:6px; margin:8px 0 0 !important; padding:0 !important; list-style:none; }
+.late-question { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; padding:8px 10px; background:var(--amber-bg); border:1px solid #e9ddc6; border-radius:6px; color:var(--ink) !important; }
+.late-question > span:first-child { flex:1 1 320px; }
+.late-question .question-actions { display:flex; flex-wrap:wrap; gap:6px; }

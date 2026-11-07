@@ -12,12 +12,23 @@ anywhere.
 ## Features
 
 - Imports CSV and Excel (XLSX/XLSM and legacy XLS) result exports, including
-  QuantStudio workbooks that contain several instrument runs.
+  QuantStudio workbooks that contain several instrument runs and raw Ct tables
+  pasted into analyzed lab workbooks. Existing calculations are identified in
+  import notes; the workbench imports raw measurements and calculates its own analysis.
+  Files containing only lab plans need a corresponding qPCR results file.
 - Analyzes an experiment spread over several plates as one run with a shared
   baseline, or keeps the plates as separate runs. Plates can be added later.
 - Shows raw Ct values as a heatmap, plate map and table immediately after import.
+- Reads the plate layout from the Ct values when an export has no sample names:
+  replicate wells are found and the samples numbered, the same number for the same
+  sample in every gene. It asks when the pattern is unclear, or when one placeholder
+  name covers a whole plate. Real names can be pasted over the numbers in one go, filled
+  from a list in pipetting order, pasted from an Excel plate grid, or drawn on the plate.
 - Normalizes target genes to one or more reference genes and a group of baseline
   samples, separately for each run.
+- Recognizes reference-gene stability experiments ("housekeeping genes", "hkg") and,
+  once you confirm, ranks the candidate genes by geNorm M and pairwise variation and
+  plots their raw Ct per condition, without fold changes.
 - Flags signal in no-template controls and wide spread between technical replicates,
   and records every exclusion and review note in an audit trail.
 - Summarizes biological replicates. For a confirmed independent-group design it runs
@@ -76,19 +87,25 @@ copy the folder. The workbench only accepts connections from your own computer.
 
 ## Using the workbench
 
-1. **Import.** Choose **Upload results**, name the project and select an instrument
-   export, or several plate files of one experiment. The raw Ct overview opens
-   straight away. Each instrument run is kept separate unless you combine plates
-   into one run.
-2. **Describe the samples.** Open **Set up analysis** and check the suggested
+1. **Import.** Choose **Upload results** or drop export files anywhere in the window.
+   With several files, say whether they are separate experiments or plates of one
+   experiment. The raw Ct overview opens straight away. Each instrument run is kept
+   separate unless you combine plates into one run.
+2. **Name the samples on the plate** if the export does not. The workbench numbers
+   them when the plate pattern is clear, or offers its guess when it is not.
+   **Give the samples their names** opens **Plate layout**, where the real names are
+   pasted over the numbers.
+3. **Describe the samples.** Open **Set up analysis** and check the suggested
    conditions, time points and biological replicates under **Samples & design**.
    Save the sample mapping.
-3. **Normalize.** Under **Normalization**, select the run, the reference genes and
-   the baseline samples, then choose **Calculate expression**.
-4. **Review quality.** The QC review lists control signals and technical replicates
+4. **Normalize.** Under **Normalization**, select the run, the reference genes and
+   the baseline samples, then choose **Calculate expression**. A reference-gene
+   stability experiment skips this step: its results appear on the dashboard as
+   soon as the samples are named.
+5. **Review quality.** The QC review lists control signals and technical replicates
    with a Ct range above 1 cycle (adjustable). Exclude wells with a reason, or mark a
    finding as reviewed with a note.
-5. **Inspect and export.** Use **Overview**, **All genes**, **Statistics** and
+6. **Inspect and export.** Use **Overview**, **All genes**, **Statistics** and
    **History** to explore the results. Every figure has an **Export** menu.
 
 The **Experiments** page lists all imports, and the **Gene explorer** shows one gene
@@ -128,10 +145,12 @@ reported correctly. The [user guide](docs/user-guide.md) gives the full details.
 
 - Input must be Ct/Cq result exports. Ct values are not called from amplification
   curves.
-- The workbook importer has been verified on QuantStudio exports of the LAD081
-  layout. Other workbook layouts may not import yet; they produce an error message
-  instead of an empty experiment.
-- Assay efficiencies are not estimated or applied.
+- The importer has been verified on QuantStudio 5 exports (XLSX and XLS), including
+  plates whose sample names are empty or a single placeholder. Other workbook
+  layouts may not import yet; they produce an error message instead of an empty
+  experiment.
+- Assay efficiencies are not estimated or applied. Stability rankings assume 100%
+  efficiency.
 - This is a single-user application for one computer. It has no user accounts,
   sharing or central hosting.
 
@@ -167,6 +186,14 @@ server reachable from your network.
 To run the packaged single-address mode from a checkout, build the interface with
 `npm --prefix frontend run build` and start `python -m backend`. This is the same
 launcher as the installed `qpcr-workbench` command.
+
+A `qpcr-workbench` command installed from the checkout with
+`uv tool install --python 3.11 --editable .` runs the checkout's current code and its
+last `frontend/dist` build, but keeps the packages of its install. After a dependency
+is added to `pyproject.toml`, the launcher names the missing package and the command
+that updates it: `uv tool install --python 3.11 --editable . --reinstall`. Under WSL
+the launcher opens the Windows browser (`wslview` or `explorer.exe`) unless `BROWSER`
+is set.
 
 **Checks**
 

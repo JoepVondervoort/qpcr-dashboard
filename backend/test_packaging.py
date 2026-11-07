@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
+import shlex
 import signal
 import socket
 import subprocess
@@ -171,3 +173,66 @@ def test_launcher_explains_a_port_taken_by_another_program(tmp_path: Path) -> No
     assert result.returncode == 1
     assert f"--port {port + 1}" in result.stderr
     assert not (tmp_path / "data").exists()
+
+
+URL = "http://127.0.0.1:8002/"
+
+
+def test_browser_opens_on_the_windows_desktop_under_wsl(monkeypatch: pytest.MonkeyPatch) -> None:
+    started: list[list[str]] = []
+    opened: list[str] = []
+    monkeypatch.delenv("BROWSER", raising=False)
+    monkeypatch.setattr(launcher, "in_wsl", lambda: True)
+    monkeypatch.setattr(launcher.shutil, "which", lambda program: f"/mnt/c/Windows/{program}" if program == "explorer.exe" else None)
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda command, **options: started.append(command) or options)
+    monkeypatch.setattr(launcher.webbrowser, "open", opened.append)
+    launcher.open_browser(URL)
+    # gio and xdg-open cannot reach the Windows desktop from WSL: "gio: ...: Operation not supported".
+    assert started == [["/mnt/c/Windows/explorer.exe", URL]] and opened == []
+    # A browser the user chose, and every other system, use Python's own lookup.
+    monkeypatch.setenv("BROWSER", "firefox")
+    launcher.open_browser(URL)
+    monkeypatch.delenv("BROWSER")
+    monkeypatch.setattr(launcher, "in_wsl", lambda: False)
+    launcher.open_browser(URL)
+    assert opened == [URL, URL] and len(started) == 1
+
+
+def write_checkout(directory: Path, dependencies: list[str], name: str = "qpcr-workbench") -> Path:
+    (directory / "backend").mkdir(parents=True)
+    listed = ", ".join(f'"{dependency}"' for dependency in dependencies)
+    (directory / "pyproject.toml").write_text(f'[project]\nname = "{name}"\ndependencies = [{listed}]\n', encoding="utf-8")
+    return directory / "backend"
+
+
+def test_launcher_names_packages_the_code_needs_but_the_installation_lacks(tmp_path: Path) -> None:
+    # An editable installation runs updated code with the packages of its first install: xlrd came later.
+    # A marker cannot be evaluated without the packaging library: such an entry is skipped, never reported.
+    package = write_checkout(tmp_path / "checkout", ["fastapi>=0.1", "uvicorn[standard]>=0.30,<1", "qpcr-never-installed>=1",
+                                                     "qpcr-windows-only>=1; sys_platform == 'win32'"])
+    assert launcher.missing_packages(package) == ["qpcr-never-installed"]
+    checkout = tmp_path / "checkout"
+    python = f"{sys.version_info.major}.{sys.version_info.minor}"
+    tool = launcher.missing_packages_advice(["xlrd"], package, uv_tool=True)
+    assert "xlrd" in tool and f'uv tool install --python {python} --editable "{checkout}" --reinstall' in tool
+    pip = launcher.missing_packages_advice(["xlrd"], package, uv_tool=False)
+    assert (f'& "{sys.executable}"' if os.name == "nt" else shlex.join([sys.executable, "-m", "pip", "install", "-e", str(checkout)])) in pip
+    # Another project's pyproject.toml beside an installed package says nothing about this installation.
+    other = write_checkout(tmp_path / "other", ["qpcr-never-installed"], name="something-else")
+    assert "qpcr-never-installed" not in launcher.missing_packages(other)
+    assert "INSTALL.md" in launcher.missing_packages_advice(["xlrd"], other, uv_tool=True)
+
+
+def test_launcher_explains_a_missing_package_instead_of_a_traceback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def without_scipy(_interface: Path) -> FastAPI:
+        raise ModuleNotFoundError("No module named 'scipy'", name="scipy")
+
+    monkeypatch.setattr(launcher, "local_app", without_scipy)
+    monkeypatch.setattr(launcher, "find_web_interface", lambda _: write_interface(tmp_path / "dist"))
+    # main() points the storage variables at --data-dir; monkeypatch restores this process's values afterwards.
+    for key in ("QPCR_DATA_DIR", "QPCR_UPLOAD_DIR"):
+        monkeypatch.setenv(key, str(tmp_path / "unused"))
+    with pytest.raises(SystemExit) as stopped:
+        launcher.main(["--no-browser", "--port", str(free_port()), "--data-dir", str(tmp_path / "store")])
+    message = str(stopped.value.code)
+    assert message.startswith("The workbench cannot start") and "scipy" in message

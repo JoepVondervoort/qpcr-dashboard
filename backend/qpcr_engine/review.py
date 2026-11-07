@@ -4,7 +4,7 @@ import hashlib
 import json
 from collections import defaultdict
 from typing import Any
-from .sample_metadata import infer_sample_metadata
+from .sample_metadata import infer_sample_metadata, suffix_replicates
 from .sample_roles import is_technical_control
 
 
@@ -30,16 +30,57 @@ def instances(records, legacy=None, overrides=None):
     return result
 
 
+def _unanswered(records, legacy=None, overrides=None) -> dict[str, tuple[str, str]]:
+    """Biological sample names nobody has saved an annotation for: key -> (run, name)."""
+    found = {}
+    for row in records:
+        name = str(row['sample']); run = str(row.get('run_id','')); key = sample_instance_id(run, name)
+        if key not in (overrides or {}) and name not in (legacy or {}) and not is_technical_control(name):
+            found[key] = (run, name)
+    return found
+
+
+def _replicate_endings(unanswered: dict[str, tuple[str, str]]) -> dict[str, tuple[str, str, str]]:
+    """Per run, the unanswered names whose trailing number may be a replicate: key -> (stem, separator, number)."""
+    runs: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for key, (run, name) in unanswered.items():
+        runs[run].append((key, name))
+    found = {}
+    for members in runs.values():
+        endings = suffix_replicates(name for _, name in members)
+        found.update({key: endings[name.strip()] for key, name in members if name.strip() in endings})
+    return found
+
+
+def replicate_questions(records, legacy=None, overrides=None) -> dict[str, dict[str, Any]]:
+    """Names ending in a number that may count replicates: the annotation if the scientist says it does, and a note.
+
+    Until then each name stays its own condition: pooling doses or samples by mistake would change results silently.
+    The note names any other guess in the name (a time point read from "d7"), since either answer saves the row.
+    """
+    unanswered = _unanswered(records, legacy, overrides)
+    questions = {}
+    for key, (stem, _, number) in _replicate_endings(unanswered).items():
+        inferred = infer_sample_metadata(stem)
+        reading = {k: v for k, v in inferred.items() if k != 'name_check'}
+        note = inferred.get('name_check') or infer_sample_metadata(unanswered[key][1]).get('name_check')
+        questions[key] = {'annotation': {**reading, 'replicate': number, 'biological_unit_id': '', 'cell_line': None, 'confluency': None, 'role': 'biological'},
+                          'note': note}
+    return questions
+
+
 def name_checks(records, legacy=None, overrides=None) -> dict[str, str]:
     """Suggestions read from unusual sample names that nobody has saved yet; the scientist should confirm them."""
+    unanswered = _unanswered(records, legacy, overrides)
+    endings = _replicate_endings(unanswered)
     checks = {}
-    for row in records:
-        name = str(row['sample']); key = sample_instance_id(str(row.get('run_id','')), name)
-        if key in checks or key in (overrides or {}) or name in (legacy or {}):
-            continue
-        check = infer_sample_metadata(name).get('name_check')
-        if check and not is_technical_control(name):
-            checks[key] = check
+    for key, (_, name) in unanswered.items():
+        questions = [infer_sample_metadata(name).get('name_check')]
+        if key in endings:
+            stem, separator, number = endings[key]
+            questions.append(f"Is the ending “{separator}{number}” replicate {number} of “{stem}”? Answer the replicate question above the table.")
+        if any(questions):
+            checks[key] = ' '.join(question for question in questions if question)
     return checks
 
 

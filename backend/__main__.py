@@ -5,11 +5,19 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
+import re
+import shlex
+import shutil
 import socket
+import subprocess
+import sys
 import threading
 import time
+import tomllib
 import urllib.request
 import webbrowser
+from importlib import metadata
 from pathlib import Path
 
 import uvicorn
@@ -24,6 +32,8 @@ LOCAL_HOSTS = ["127.0.0.1", "localhost"]
 DEFAULT_PORT = 8002
 DEFAULT_DATA_DIR = Path.home() / ".qpcr-workbench"
 PACKAGE_DIR = Path(__file__).resolve().parent
+DISTRIBUTION = "qpcr-workbench"
+_REQUIREMENT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 # Proxy settings (common on institutional Windows PCs) must not intercept requests to this computer.
 _LOCAL = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -77,12 +87,85 @@ def local_app(interface: Path) -> FastAPI:
     return app
 
 
+def in_wsl() -> bool:
+    return sys.platform == "linux" and "microsoft" in platform.uname().release.lower()
+
+
+def open_browser(url: str) -> None:
+    """Open the default browser. Under WSL that is the Windows browser: gio and xdg-open cannot reach it."""
+    if in_wsl() and not os.environ.get("BROWSER"):
+        for program in ("wslview", "explorer.exe"):
+            path = shutil.which(program)
+            if not path:
+                continue
+            try:
+                # Detached from the terminal: a Windows program must not read the launcher's input or get its Ctrl+C.
+                subprocess.Popen([path, url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, start_new_session=True)
+                return
+            except OSError:
+                continue
+    webbrowser.open(url)
+
+
 def open_browser_when_ready(server: uvicorn.Server, url: str) -> None:
     while not server.started:
         if server.should_exit:
             return
         time.sleep(0.1)
-    webbrowser.open(url)
+    open_browser(url)
+
+
+def source_checkout(package_dir: Path = PACKAGE_DIR) -> tuple[Path, list[str]] | None:
+    """The checkout this code runs from (an editable install), with the dependencies it declares now."""
+    try:
+        project = tomllib.loads((package_dir.parent / "pyproject.toml").read_text(encoding="utf-8")).get("project", {})
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    return (package_dir.parent, list(project.get("dependencies", []))) if project.get("name") == DISTRIBUTION else None
+
+
+def missing_packages(package_dir: Path = PACKAGE_DIR) -> list[str]:
+    """Declared dependencies that are not installed. An editable install keeps the packages of its first
+    install while its code follows the checkout, so a dependency added later is missing until it is reinstalled."""
+    checkout = source_checkout(package_dir)
+    try:
+        requirements = checkout[1] if checkout else metadata.requires(DISTRIBUTION) or []
+    except metadata.PackageNotFoundError:
+        return []
+    # Markers (extras, platforms) cannot be evaluated without the packaging library: skipped, never reported.
+    names = [match.group(0) for requirement in requirements
+             if ";" not in requirement and (match := _REQUIREMENT_NAME.match(requirement))]
+
+    def installed(name: str) -> bool:
+        try:
+            metadata.distribution(name)
+        except metadata.PackageNotFoundError:
+            return False
+        return True
+
+    return [name for name in names if not installed(name)]
+
+
+def update_command(package_dir: Path = PACKAGE_DIR, uv_tool: bool | None = None) -> str | None:
+    """The command that installs a checkout's current dependencies into the environment running this code."""
+    checkout = source_checkout(package_dir)
+    if not checkout:
+        return None
+    if (Path(sys.prefix) / "uv-receipt.toml").is_file() if uv_tool is None else uv_tool:
+        python = f"{sys.version_info.major}.{sys.version_info.minor}"
+        return f'uv tool install --python {python} --editable "{checkout[0]}" --reinstall'
+    if os.name == "nt":
+        # PowerShell runs a quoted program path only after the call operator.
+        return f'& "{sys.executable}" -m pip install -e "{checkout[0]}"'
+    return shlex.join([sys.executable, "-m", "pip", "install", "-e", str(checkout[0])])
+
+
+def missing_packages_advice(missing: list[str], package_dir: Path = PACKAGE_DIR, uv_tool: bool | None = None) -> str:
+    command = update_command(package_dir, uv_tool)
+    update = (f"To update it, stop the workbench (Ctrl+C) if it is running, then run:\n  {command}" if command
+              else "Reinstall it from its .whl file, as described in INSTALL.md.")
+    return f"This installation is missing {', '.join(missing)}, which the workbench needs. {update}"
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -91,7 +174,7 @@ def main(argv: list[str] | None = None) -> None:
     if workbench_running(args.port):
         print(f"{APP_NAME} is already running at {url}", flush=True)
         if not args.no_browser:
-            webbrowser.open(url)
+            open_browser(url)
         return
     interface = find_web_interface(PACKAGE_DIR)
     if interface is None:
@@ -104,13 +187,21 @@ def main(argv: list[str] | None = None) -> None:
                          f"Start on another port instead: qpcr-workbench --port {args.port + 1}") from None
     data_dir = args.data_dir.expanduser().resolve()
     os.environ.update(storage_environment(data_dir))
-    server = uvicorn.Server(uvicorn.Config(local_app(interface), host=HOST, port=args.port, log_level="warning"))
+    missing = missing_packages()
+    try:
+        app = local_app(interface)
+    except ModuleNotFoundError as error:
+        sock.close()
+        raise SystemExit(f"The workbench cannot start. {missing_packages_advice([error.name or str(error)])}") from None
+    server = uvicorn.Server(uvicorn.Config(app, host=HOST, port=args.port, log_level="warning"))
     if not args.no_browser:
         threading.Thread(target=open_browser_when_ready, args=(server, url), daemon=True).start()
     print(f"{APP_NAME} {__version__}", flush=True)
     print(f"Open {url} in your browser.", flush=True)
     print(f"Your data: {data_dir}", flush=True)
     print("Keep this window open while you work. Press Ctrl+C to stop.", flush=True)
+    if missing:
+        print(f"Warning: some files cannot be imported. {missing_packages_advice(missing)}", file=sys.stderr, flush=True)
     try:
         server.run(sockets=[sock])
     except KeyboardInterrupt:

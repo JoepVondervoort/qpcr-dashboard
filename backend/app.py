@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -10,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Callable, Literal
 from xml.sax.saxutils import escape
 from zipfile import BadZipFile
 
@@ -24,9 +25,14 @@ from backend.qpcr_engine import import_qpcr_file, summarize_results
 from backend.qpcr_engine.sample_roles import is_technical_control
 from backend.qpcr_engine.sample_metadata import infer_sample_metadata, analysis_group
 from backend.qpcr_engine.statistics import holm
-from backend.qpcr_engine.review import sample_instance_id, measurement_id, instances, assess_quality, canonical_hash, name_checks, quality_flag_id
+from backend.qpcr_engine.review import sample_instance_id, measurement_id, instances, assess_quality, canonical_hash, name_checks, quality_flag_id, replicate_questions
+from backend.qpcr_engine.experiment_type import analysis_type_state, experiment_texts, measured_assays
 from backend.qpcr_engine.library import condition_results
 from backend.qpcr_engine.plates import add_plates_to_run, check_new_plates, combine_all
+from backend.qpcr_engine.layout import (UNASSIGNED_SAMPLE, analysable_assays, apply_layout, confirmation, confirmations_on_plate,
+                                        layout_checks, open_layout_questions, reopened_reviews)
+from backend.qpcr_engine.layout_guess import suggest_layouts
+from backend.qpcr_engine.sample_numbering import active_auto_layouts, apply_suggestions, numbering_problem, undo_numbering
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("QPCR_DATA_DIR", str(BASE_DIR / "data")))
@@ -40,6 +46,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # read local research data. The interface itself is same-origin (packaged app or Vite proxy).
 CORS_ORIGINS = [origin.strip() for origin in os.environ.get("QPCR_CORS_ORIGINS", "").split(",") if origin.strip()]
 
+logger = logging.getLogger(__name__)
 app = FastAPI(title=APP_NAME, version=__version__)
 if CORS_ORIGINS:
     app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
@@ -145,6 +152,12 @@ class ExperimentRename(BaseModel):
     name: str = Field(max_length=400)
 
 
+class AnalysisTypeRequest(BaseModel):
+    """Fold-change expression, or a comparison of candidate reference genes and the genes it compares."""
+    type: Literal["expression", "reference_stability"]
+    stability_genes: list[str] | None = Field(default=None, max_length=200)
+
+
 class ReviewDecision(BaseModel):
     reason: str = Field(min_length=1)
 
@@ -205,6 +218,9 @@ def analysis_context(experiment: dict[str, Any], payload: AnalysisRequest, *, al
     if set(annotations) - set(experiment["sample_instances"]):
         raise HTTPException(status_code=422, detail="Unknown run/sample instance in the analysis mapping.")
     annotations = instances(experiment["raw_records"], overrides=annotations)
+    blocking = [c for c in experiment.get("layout_checks", []) if c["blocking"] and c["run_id"] == payload.run_id]
+    if blocking:
+        raise HTTPException(status_code=409, detail=f"Finish the plate layout in Set up analysis first. {blocking[0]['message']}")
     if not allow_draft and annotations != experiment['sample_instances']:
         raise HTTPException(status_code=409,detail="Save the run-specific sample mapping before analysis; the request contains unsaved assignments.")
     run_records = [r for r in experiment["raw_records"] if r.get("run_id") == payload.run_id]
@@ -267,6 +283,9 @@ def library_summary(experiment: sqlite3.Row, conn: sqlite3.Connection) -> dict[s
     metadata = read_json_column(experiment["metadata"]) or {}
     annotations = instances(records, metadata.get("sample_metadata", {}), metadata.get("sample_instances", {}))
     quality = assess_quality(records, metadata.get("measurement_exclusions", {}), metadata.get("qc_decisions", {}), metadata.get("spread_threshold", 1.0), {k: v.get("role") for k, v in annotations.items()})
+    is_control = _annotated_control(annotations)
+    layout = layout_checks(records, is_control, metadata.get("layout_confirmations", []))
+    kind = _analysis_type(experiment["name"], experiment["original_filename"], read_json_column(experiment["parsed_summary"]), records, metadata, is_control)
     latest_profiles: dict[str, str] = {}
     selected: dict[tuple[str, str], dict[str, Any]] = {}
     for row in conn.execute("SELECT result_json FROM analysis_versions WHERE experiment_id = ? ORDER BY created_at DESC", (experiment["id"],)):
@@ -289,12 +308,13 @@ def library_summary(experiment: sqlite3.Row, conn: sqlite3.Connection) -> dict[s
         if saved is None:
             incomplete = True
             continue
-        targets = {r["assay"] for r in records if r.get("run_id") == run["id"]} - set(saved.get("reference_assays", []))
+        targets = set(analysable_assays([r for r in records if r.get("run_id") == run["id"]], is_control)) - set(saved.get("reference_assays", []))
         incomplete |= any((run["id"], assay) not in selected for assay in targets)
     return {
         "assay_count": len({r["assay"] for r in records}),
-        "biological_sample_count": sum(a.get("role") != "technical_control" for a in annotations.values()),
+        "biological_sample_count": sum(a.get("role") != "technical_control" and json.loads(key)[1] != UNASSIGNED_SAMPLE for key, a in annotations.items()),
         "unresolved_count": quality["unresolved_count"],
+        "layout_issue_count": open_layout_questions(records, layout, is_control),
         "unresolved_findings": len({(f["kind"], f["run_id"], f.get("plate"), f["sample"]) for f in quality["flags"] if f["status"] == "needs_review"}),
         "reviewed_count": quality["reviewed_count"],
         "design_confirmed": bool(metadata.get("experiment_design", {}).get("confirmed")),
@@ -302,6 +322,9 @@ def library_summary(experiment: sqlite3.Row, conn: sqlite3.Connection) -> dict[s
         "saved_result_count": len(selected),
         "outdated_result_count": outdated,
         "gene_results": gene_results,
+        "analysis_type": kind["type"],
+        # A suggestion the scientist has not answered yet, and that differs from the current type.
+        "analysis_type_question": bool(kind["suggestion"] and not kind["confirmed"] and kind["suggestion"]["type"] != kind["type"]),
     }
 
 
@@ -376,7 +399,7 @@ async def _store_uploads(uploads: list[UploadFile]) -> list[dict[str, Any]]:
                 raise ValueError(f"{original} could not be read. Export it again, or save it as .xlsx or .csv.") from error
             if not parsed["record_count"]:
                 explanation = " ".join(parsed["warnings"])
-                raise ValueError(f"No raw Ct/Cq measurements were found in {original}. {explanation} Upload the results file that the qPCR software exported for each plate, not a workbook assembled by hand.")
+                raise ValueError(f"No raw Ct/Cq measurements were found in {original}. {explanation}")
             stored[-1]["parsed"] = parsed
     except (OSError, ValueError) as error:
         _discard(stored)
@@ -403,8 +426,18 @@ def _merge_parsed(stored: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], l
     return records, runs, warnings
 
 
-def _source_files(stored: list[dict[str, Any]], added_at: str) -> list[dict[str, str]]:
-    return [{"name": item["name"], "stored_name": item["path"].name, "added_at": added_at} for item in stored]
+def _source_files(stored: list[dict[str, Any]], added_at: str) -> list[dict[str, Any]]:
+    return [{"name": item["name"], "stored_name": item["path"].name, "added_at": added_at, "import_details": item["parsed"].get("source", {})} for item in stored]
+
+
+def _analysis_type(name: str, original_filename: str | None, parsed_summary: dict[str, Any] | None, records: list[dict[str, Any]],
+                   metadata: dict[str, Any], is_control) -> dict[str, Any]:
+    return analysis_type_state(metadata, experiment_texts(name, original_filename, parsed_summary), measured_assays(records, is_control))
+
+
+def _annotated_control(annotations: dict[str, Any]):
+    """Saved or suggested roles of the experiment's own sample instances."""
+    return lambda record: (annotations.get(sample_instance_id(str(record.get("run_id", "")), record["sample"])) or {}).get("role") == "technical_control"
 
 
 def _role_checker(records: list[dict[str, Any]], metadata: dict[str, Any]):
@@ -423,6 +456,24 @@ def _plate_scoped_decisions(decisions: dict[str, Any], records: list[dict[str, A
     moves = {quality_flag_id(kind, run["id"], sample, assay): quality_flag_id(kind, run["id"], sample, assay, run["name"])
              for sample, assay in pairs for kind in ("control_signal", "technical_spread")}
     return {moves.get(key, key): value for key, value in decisions.items()}
+
+
+def _number_clear_layouts(records: list[dict[str, Any]], metadata: dict[str, Any], now: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Plates without any sample names are numbered on import when the pattern is clear; the others are offered.
+
+    Numbering is a convenience: when it cannot be applied, the plates import unnamed, and the experiment says why and
+    how to import them so that it works.
+    """
+    def by_name(record: dict[str, Any]) -> bool:
+        return is_technical_control(record["sample"])
+    clear = [s for s in suggest_layouts(records, by_name) if s["confident"] and s["kind"] == "unnamed"]
+    if not clear:
+        return records, metadata
+    try:
+        return apply_suggestions(records, metadata, clear, by_name, now)
+    except ValueError as error:
+        logger.exception("Numbering the samples on import failed; the plates stay unnamed.")
+        return records, {**metadata, "numbering_problem": numbering_problem(error, clear)}
 
 
 @app.post("/api/projects/{project_id}/upload")
@@ -450,6 +501,8 @@ async def upload_experiment(project_id: str, file: Annotated[UploadFile | None, 
     file_names = [item["name"] for item in stored]
     experiment_id = str(uuid.uuid4())
     now = utc_now()
+    records, metadata = _number_clear_layouts(records, {"source": stored[0]["name"], "warnings": warnings,
+                                                        "source_files": _source_files(stored, now)}, now)
 
     with get_db() as conn:
         conn.execute(
@@ -470,7 +523,7 @@ async def upload_experiment(project_id: str, file: Annotated[UploadFile | None, 
                 serialize_json(records),
                 serialize_json({"record_count": len(records), "warnings": warnings, "runs": runs, "files": file_names}),
                 serialize_json({}),
-                serialize_json({"source": stored[0]["name"], "warnings": warnings, "source_files": _source_files(stored, now)}),
+                serialize_json(metadata),
             ),
         )
 
@@ -483,6 +536,7 @@ async def upload_experiment(project_id: str, file: Annotated[UploadFile | None, 
         "record_count": len(records),
         "runs": runs,
         "warnings": warnings,
+        "numbering_problem": metadata.get("numbering_problem"),
     }
 
 
@@ -522,6 +576,8 @@ def _merge_plates(row: sqlite3.Row, stored: list[dict[str, Any]], combine_into: 
         if target is None:
             raise ValueError("The run to combine with is not part of this experiment.")
         decisions = _plate_scoped_decisions(decisions, records, target)
+        metadata = {**metadata, "layout_confirmations": confirmations_on_plate(metadata.get("layout_confirmations", []), target),
+                    "auto_layouts": confirmations_on_plate(metadata.get("auto_layouts", []), target)}
         merged, merged_runs = add_plates_to_run(records, runs, combine_into, new_records, new_runs, _role_checker(records, metadata))
     else:
         merged, merged_runs = [*records, *new_records], [*runs, *new_runs]
@@ -571,6 +627,7 @@ def get_experiment(project_id: str, experiment_id: str) -> dict[str, Any]:
     metadata = read_json_column(row["metadata"])
     annotations = instances(records, metadata.get('sample_metadata',{}), metadata.get('sample_instances',{}))
     quality = assess_quality(records, metadata.get('measurement_exclusions',{}), metadata.get('qc_decisions',{}), metadata.get('spread_threshold',1.0), {k:v.get('role') for k,v in annotations.items()})
+    suggestions = suggest_layouts(records, _annotated_control(annotations), metadata.get('layout_confirmations', []))
     return {
         "id": row["id"],
         "name": row["name"],
@@ -580,7 +637,15 @@ def get_experiment(project_id: str, experiment_id: str) -> dict[str, Any]:
         "raw_records": [{**r, 'measurement_id':measurement_id(r), 'sample_instance_id':sample_instance_id(r.get('run_id',''),r['sample'])} for r in records],
         "sample_instances": annotations,
         "name_checks": name_checks(records, metadata.get('sample_metadata',{}), metadata.get('sample_instances',{})),
+        "replicate_questions": replicate_questions(records, metadata.get('sample_metadata',{}), metadata.get('sample_instances',{})),
+        "analysis_type": _analysis_type(row["name"], row["original_filename"], read_json_column(row["parsed_summary"]), records, metadata, _annotated_control(annotations)),
         "quality": quality,
+        "layout_checks": layout_checks(records, _annotated_control(annotations), metadata.get('layout_confirmations', [])),
+        "layout_confirmations": [c for c in metadata.get('layout_confirmations', []) if isinstance(c, dict)],
+        "layout_suggestions": suggestions,
+        "auto_layouts": active_auto_layouts(records, metadata),
+        # Why the numbering on import failed, while the plates are still unnumbered.
+        "numbering_problem": metadata.get("numbering_problem") if suggestions else None,
         "context_revision": metadata.get('context_revision',0),
         "input_sha256": hashlib.sha256(row['raw_records'].encode()).hexdigest(),
         "experiment_design": metadata.get('experiment_design',ExperimentDesign().model_dump()),
@@ -730,6 +795,111 @@ def update_sample_instances(project_id: str, experiment_id: str, payload: dict[s
     return get_experiment(project_id,experiment_id)
 
 
+class PlateLayoutRequest(BaseModel):
+    run_id: str
+    plate: str | None = None
+    # Well address -> sample name; an empty name restores the name in the instrument export.
+    wells: dict[str, str] = Field(default_factory=dict, max_length=384)
+    # Names on this plate whose many wells the scientist confirms are technical replicates of one sample.
+    confirm_replicates: list[str] = Field(default_factory=list, max_length=384)
+    # Names whose confirmation is withdrawn.
+    revoke_replicates: list[str] = Field(default_factory=list, max_length=384)
+
+
+def _layout_update(records: list[dict[str, Any]], metadata: dict[str, Any], payload: PlateLayoutRequest) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
+    updated, change = apply_layout(records, payload.run_id, payload.plate, payload.wells, _role_checker(records, metadata))
+    plate = payload.plate or None
+    on_plate = {r["sample"] for r in updated if r.get("run_id") == payload.run_id and r.get("plate") == plate}
+    unknown = sorted((set(payload.confirm_replicates) | set(payload.revoke_replicates)) - on_plate)
+    if unknown:
+        raise ValueError(f"Sample(s) {', '.join(unknown)} are not on this plate.")
+    previous = [c for c in metadata.get("layout_confirmations", []) if isinstance(c, dict)]
+    replaced = {(payload.run_id, plate, sample) for sample in [*payload.confirm_replicates, *payload.revoke_replicates]}
+    confirmations = [*(c for c in previous if (c.get("run_id"), c.get("plate"), c.get("sample")) not in replaced),
+                     *(confirmation(updated, payload.run_id, plate, sample) for sample in payload.confirm_replicates)]
+    if not change["wells"] and confirmations == previous:
+        return None
+    decisions = metadata.get("qc_decisions", {})
+    # A reviewed QC finding described particular wells; once a rename changes them, it needs review again.
+    reviews = reopened_reviews(decisions, records, updated)
+    event = {"at": utc_now(), "action": "plate_layout_updated", "run_id": payload.run_id, "plate": plate, **change,
+             "confirmed_replicates": sorted(payload.confirm_replicates), "revoked_replicates": sorted(payload.revoke_replicates),
+             "reopened_reviews": len(decisions) - len(reviews)}
+    return updated, {**metadata, "layout_confirmations": confirmations, "qc_decisions": reviews,
+                     "context_revision": metadata.get("context_revision", 0) + 1, "audit_events": [*metadata.get("audit_events", []), event]}
+
+
+@app.put("/api/projects/{project_id}/experiments/{experiment_id}/plate-layout")
+def update_plate_layout(project_id: str, experiment_id: str, payload: PlateLayoutRequest) -> dict[str, Any]:
+    """Name the samples in a plate's wells, or confirm that one name covers technical replicates."""
+    get_experiment(project_id, experiment_id)
+    try:
+        with get_db() as conn:
+            # Read and write in one transaction, so reviews saved meanwhile are kept.
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT raw_records, metadata FROM experiments WHERE project_id = ? AND id = ?",
+                               (project_id, experiment_id)).fetchone()
+            if row is None:
+                raise ValueError("This experiment no longer exists.")
+            update = _layout_update(read_json_column(row["raw_records"]) or [], read_json_column(row["metadata"]) or {}, payload)
+            if update is not None:
+                conn.execute("UPDATE experiments SET raw_records = ?, metadata = ? WHERE id = ? AND project_id = ?",
+                             (serialize_json(update[0]), serialize_json(update[1]), experiment_id, project_id))
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return get_experiment(project_id, experiment_id)
+
+
+class NumberSamplesRequest(BaseModel):
+    # The revision the scientist saw the suggestion at; a different one means the suggestion may have changed.
+    expected_revision: int | None = None
+
+
+def _change_numbering(project_id: str, experiment_id: str, change: Callable[..., tuple[list[dict[str, Any]], dict[str, Any]]],
+                      expected_revision: int | None = None) -> dict[str, Any]:
+    """Read, change and write the records and metadata in one transaction, so reviews saved meanwhile are kept."""
+    get_experiment(project_id, experiment_id)
+    try:
+        with get_db() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT raw_records, metadata FROM experiments WHERE project_id = ? AND id = ?",
+                               (project_id, experiment_id)).fetchone()
+            if row is None:
+                raise ValueError("This experiment no longer exists.")
+            records, metadata = read_json_column(row["raw_records"]) or [], read_json_column(row["metadata"]) or {}
+            if expected_revision is not None and expected_revision != metadata.get("context_revision", 0):
+                raise LookupError("The experiment changed since this suggestion was shown. Check the new suggestion, then try again.")
+            is_control = _annotated_control(instances(records, metadata.get("sample_metadata", {}), metadata.get("sample_instances", {})))
+            updated, changed = change(records, metadata, is_control, utc_now())
+            conn.execute("UPDATE experiments SET raw_records = ?, metadata = ? WHERE id = ? AND project_id = ?",
+                         (serialize_json(updated), serialize_json(changed), experiment_id, project_id))
+    except LookupError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return get_experiment(project_id, experiment_id)
+
+
+@app.post("/api/projects/{project_id}/experiments/{experiment_id}/number-samples")
+def number_samples(project_id: str, experiment_id: str, payload: NumberSamplesRequest | None = None) -> dict[str, Any]:
+    """Apply the workbench's numbering, as shown in layout_suggestions, to every plate that still has no sample names."""
+    def number(records, metadata, is_control, now):
+        suggestions = suggest_layouts(records, is_control, metadata.get("layout_confirmations", []))
+        if not suggestions:
+            raise LookupError("Every plate already has sample names. Change them under Plate layout.")
+        try:
+            return apply_suggestions(records, metadata, suggestions, is_control, now)
+        except ValueError as error:
+            raise ValueError(numbering_problem(error, suggestions)) from error
+    return _change_numbering(project_id, experiment_id, number, payload.expected_revision if payload else None)
+
+
+@app.delete("/api/projects/{project_id}/experiments/{experiment_id}/number-samples")
+def unnumber_samples(project_id: str, experiment_id: str) -> dict[str, Any]:
+    """Give wells that still carry the workbench's numbers their names from the export again."""
+    return _change_numbering(project_id, experiment_id, undo_numbering)
+
+
 @app.patch("/api/projects/{project_id}/experiments/{experiment_id}")
 def rename_experiment(project_id: str, experiment_id: str, payload: ExperimentRename) -> dict[str, Any]:
     """Display name only: the original filename, raw data and saved results are unchanged."""
@@ -746,6 +916,46 @@ def rename_experiment(project_id: str, experiment_id: str, payload: ExperimentRe
     with get_db() as conn:
         conn.execute("UPDATE experiments SET name = ?, metadata = ? WHERE id = ? AND project_id = ?",(name,serialize_json(metadata),experiment_id,project_id))
     return get_experiment(project_id,experiment_id)
+
+
+def _analysis_type_update(records: list[dict[str, Any]], metadata: dict[str, Any], payload: AnalysisTypeRequest) -> dict[str, Any] | None:
+    """New metadata recording the experiment type and compared genes, or None when nothing changes."""
+    genes = payload.stability_genes
+    if genes is not None:
+        measured = set(measured_assays(records, _role_checker(records, metadata)))
+        unknown = next((gene for gene in genes if gene not in measured), None)
+        if unknown is not None:
+            raise ValueError(f"“{unknown[:80]}” is not a gene measured in a sample of this experiment.")
+        repeated = next((gene for gene in genes if genes.count(gene) > 1), None)
+        if repeated is not None:
+            raise ValueError(f"“{repeated[:80]}” is listed twice. Choose each gene once.")
+    after = {"type": payload.type, "stability_genes": None if genes is None else list(genes)}
+    before = metadata.get("analysis_type")
+    if before == after:
+        return None
+    event = {"at": utc_now(), "action": "analysis_type_set", "before": before, "after": after}
+    return {**metadata, "analysis_type": after, "audit_events": [*metadata.get("audit_events", []), event]}
+
+
+@app.put("/api/projects/{project_id}/experiments/{experiment_id}/analysis-type")
+def set_analysis_type(project_id: str, experiment_id: str, payload: AnalysisTypeRequest) -> dict[str, Any]:
+    """Record what the experiment measures. Raw data, annotations and saved results are unchanged."""
+    get_experiment(project_id, experiment_id)
+    try:
+        with get_db() as conn:
+            # Read and write in one transaction, so layout and QC changes saved meanwhile are kept.
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT raw_records, metadata FROM experiments WHERE project_id = ? AND id = ?",
+                               (project_id, experiment_id)).fetchone()
+            if row is None:
+                raise ValueError("This experiment no longer exists.")
+            metadata = _analysis_type_update(read_json_column(row["raw_records"]) or [], read_json_column(row["metadata"]) or {}, payload)
+            if metadata is not None:
+                conn.execute("UPDATE experiments SET metadata = ? WHERE id = ? AND project_id = ?",
+                             (serialize_json(metadata), experiment_id, project_id))
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return get_experiment(project_id, experiment_id)
 
 
 @app.patch("/api/projects/{project_id}/experiments/{experiment_id}/design")
@@ -827,7 +1037,11 @@ def rebuild_saved_analyses(project_id: str, experiment_id: str) -> dict[str, Any
     results=[];errors=[]
     for run,settings in profiles.items():
         run_records=[r for r in experiment['raw_records'] if r['run_id']==run]
-        targets=sorted({r['assay'] for r in run_records}-set(settings['reference_assays']))
+        renamed=sorted({*settings.get('baseline_samples',[]),*settings.get('excluded_samples',[])}-{r['sample'] for r in run_records})
+        if renamed:
+            errors.append({'run_id':run,'reason':f"Sample(s) {', '.join(renamed[:3])}{' …' if len(renamed)>3 else ''} in the saved baseline or exclusions were renamed in the plate layout. Choose the baseline and exclusions again in Normalization, then calculate."})
+            continue
+        targets=sorted(set(analysable_assays(run_records,_annotated_control(experiment['sample_instances'])))-set(settings['reference_assays']))
         groups={}
         for r in run_records:
             key=r['sample_instance_id'];current=experiment['sample_instances'][key]

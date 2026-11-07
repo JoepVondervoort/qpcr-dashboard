@@ -11,7 +11,9 @@ import {QualityPanel} from './QualityPanel'
 import {OverviewHeatmap,type Availability} from './OverviewHeatmap'
 import {automaticYRange,colorGroups,type ColorBy,type ColorGroup,type PlotOptions} from './plotOptions'
 import {StatisticsResults} from './StatisticsPanel'
-import {coherentAnalyses,observation,categoryLabel,seriesLabel,sampleKey,sampleAnnotation,sampleFactors,type Observation} from './plotData'
+import {analysisGroup,coherentAnalyses,observation,categoryLabel,seriesLabel,sampleKey,sampleAnnotation,sampleFactors,type Observation} from './plotData'
+import {StabilityView} from './StabilityView'
+import {defaultStabilityGenes} from './stability'
 import {StatusBanner,type StatusAction} from './StatusBanner'
 import {dashboardStatus,type StatusItem} from './status'
 import {groupQualityFlags} from './qcGroups'
@@ -20,12 +22,13 @@ import {FigureGridHeader} from './FigureGridHeader'
 import {FIGURE_THEMES,figureTheme} from './figureTheme'
 import {baselineNotes,detectionSummary,effectiveBaselines} from './resultNotes'
 import {sharedPrefix,withoutPrefix} from './sampleNames'
+import {UNASSIGNED} from './sampleNumbering'
 
 type Props={allGenes?:boolean;experiment:Experiment;versions:{id:string;created_at:string;result:AnalysisResult}[];currentResult:AnalysisResult|null;referenceAssays:string[];annotations:Record<string,SampleMetadata>;
  onPreview:(run:string,assay:string,exclusions:Record<string,string>)=>Promise<ExclusionPreview>;onQuality:(change:QualityChange)=>Promise<void>;
- onRebuild:()=>Promise<{errors:{run_id?:string;target_assay?:string;reason:string}[];runs_rebuilt:number}>;draftDirty:boolean;onSetup:()=>void;onSamples:()=>void;snapshot?:AnalysisResult|null;onClearSnapshot:()=>void;onStatistics:(result:AnalysisResult)=>void}
+ onRebuild:()=>Promise<{errors:{run_id?:string;target_assay?:string;reason:string}[];runs_rebuilt:number}>;draftDirty:boolean;onSetup:()=>void;onSamples:()=>void;onLayout:()=>void;onStabilityGenes:(genes:string[])=>Promise<void>;snapshot?:AnalysisResult|null;onClearSnapshot:()=>void;onStatistics:(result:AnalysisResult)=>void}
 const profile=(r:AnalysisResult)=>r.profile_id??JSON.stringify([r.reference_assays,r.baseline_samples??r.baseline_sample,r.sample_groups,r.excluded_samples,r.excluded_measurements])
-export function Dashboard({allGenes=false,experiment,versions,currentResult,referenceAssays,annotations,onQuality,onPreview,onRebuild,draftDirty,onSetup,onSamples,snapshot,onClearSnapshot,onStatistics}:Props) {
+export function Dashboard({allGenes=false,experiment,versions,currentResult,referenceAssays,annotations,onQuality,onPreview,onRebuild,draftDirty,onSetup,onSamples,onLayout,onStabilityGenes,snapshot,onClearSnapshot,onStatistics}:Props) {
  const {presentation,setPresentation,storageNotice,canUndoPresentation,undoPresentation}=usePresentation(experiment.id)
  const [previousOrder,setPreviousOrder]=useState<string[]|null>(null),[dragging,setDragging]=useState<string|null>(null),[dropTarget,setDropTarget]=useState<string|null>(null),[layoutStatus,setLayoutStatus]=useState(''),[geneSearch,setGeneSearch]=useState(''),[pinnedOnly,setPinnedOnly]=useState(false)
  const [runFilter,setRunFilter]=useState('all'),[seriesFilter,setSeriesFilter]=useState('all'),[timeFilter,setTimeFilter]=useState('all'),[chosenAssays,setChosenAssays]=useState<string[]|null>(null)
@@ -39,6 +42,8 @@ export function Dashboard({allGenes=false,experiment,versions,currentResult,refe
  const [view,setView]=useState<'time'|'bars'>('time'),[showThreshold,setShowThreshold]=useState(false),[showExcluded,setShowExcluded]=useState(true)
  const [preset,setPreset]=useState<'single'|'double'>('double'),[reportKinds,setReportKinds]=useState(['expression']),[rebuilding,setRebuilding]=useState(false),[rebuildStatus,setRebuildStatus]=useState(''),[rebuildErrors,setRebuildErrors]=useState<{run_id?:string;target_assay?:string;reason:string}[]>([])
  const records=experiment.raw_records??[],runs=experiment.parsed_summary?.runs??[],revision=experiment.context_revision??0
+ // A reference-gene stability experiment compares raw Ct of candidate genes; it has no fold changes to show.
+ const stability=experiment.analysis_type?.type==='reference_stability'
  const assays=orderedAssays([...new Set(records.map(r=>r.assay))].sort(),presentation.order),selectedAssays=(chosenAssays??assays).filter(a=>assays.includes(a))
  const allResults=[...(currentResult?[currentResult]:[]),...versions.map(v=>v.result)].filter(r=>Array.isArray(r.samples)).sort((a,b)=>(b.created_at??'').localeCompare(a.created_at??''))
  const candidates=snapshot?[snapshot]:coherentAnalyses(allResults)
@@ -47,7 +52,10 @@ export function Dashboard({allGenes=false,experiment,versions,currentResult,refe
  const isTechnical=(r:RawRecord)=>metadata(r).role==='technical_control'
  const selectedRuns=runs.filter(r=>runFilter==='all'||r.id===runFilter)
  const inRun=(r:RawRecord)=>runFilter==='all'||r.run_id===runFilter
- const biological=records.filter(r=>!isTechnical(r)),runBiological=biological.filter(inRun)
+ // Unnamed wells stay visible until a sample of their run is named, so raw data shows before a layout exists. From
+ // then on they are left out, as the analysis leaves them out; a stability comparison only ever compares named samples.
+ const namedRuns=new Set(records.filter(r=>r.sample!==UNASSIGNED&&!isTechnical(r)).map(r=>r.run_id))
+ const biological=records.filter(r=>!isTechnical(r)&&!(r.sample===UNASSIGNED&&(namedRuns.has(r.run_id)||stability))),runBiological=biological.filter(inRun)
  const factorValue=(m:SampleMetadata,key:'cell_line'|'confluency')=>sampleFactors(m)[key].trim()||'Not annotated'
  const confluencyOptions=[...new Set(biological.map(r=>factorValue(metadata(r),'confluency')))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}))
  const cellLineOptions=[...new Set(biological.map(r=>factorValue(metadata(r),'cell_line')))].sort()
@@ -105,13 +113,16 @@ export function Dashboard({allGenes=false,experiment,versions,currentResult,refe
  }
  function inheritOptions(kind:'ct'|'expression',assay:string,technical=false){setPresentation(current=>{const overrides={...current.plotOverrides};delete overrides[plotKey(kind,assay,technical)];return {...current,plotOverrides:overrides}})}
  const panelMode=allGenes||mode==='report'
+ const measured=assays.filter(assay=>assay!=='Unassigned assay'&&biological.some(r=>r.assay===assay&&r.sample!==UNASSIGNED&&r.ct!=null&&r.status==='detected'))
+ const stabilityGenes=experiment.analysis_type?.stability_genes??defaultStabilityGenes(measured)
+ const usableWell=(r:RawRecord)=>!r.omit&&!experiment.measurement_exclusions?.[r.measurement_id!]&&r.status==='detected'&&r.ct!=null&&Number.isFinite(r.ct)
  function rawFigure(assay:string,technical=false,toolbar?:ReactNode){
   const {points,data}=rawPoints(assay,technical)
   const sourceIds=new Set(data.map(r=>r.measurement_id))
   const scopedExclusions=Object.fromEntries(Object.entries(experiment.measurement_exclusions??{}).filter(([id])=>sourceIds.has(id)))
   const scopedQuality={unresolved_in_experiment:experiment.quality?.unresolved_count,spread_threshold:experiment.quality?.spread_threshold,
     flags:(experiment.quality?.flags??[]).filter(f=>f.assay===assay&&data.some(r=>r.run_id===f.run_id&&r.sample===f.sample)).map(f=>({id:f.id,run_id:f.run_id,sample:f.sample,assay:f.assay,message:f.message,status:f.status,review:f.review}))}
-  return <PublicationFigure key={`${technical?'qc':'ct'}:${assay}`} title={assay} subtitle={technical?'Technical control · raw Ct · QC only':savedRefs.includes(assay)?'Reference assay · raw Ct':'Target assay · raw Ct'} observations={points} kind="ct" technical={technical} colorDomain={colorDomain} labelFor={displayLabel} timeAxisLabel={timeAxisLabel} preset={allGenes?'single':preset} compactDisplay={panelMode} panelNotes={mode==='report'?'always':'print'} toolbar={toolbar} presentation={presentation} sharedRange={sharedRanges.ct} colorDomains={colorDomains} onOptionsChange={(options,scope)=>saveOptions('ct',assay,technical,options,scope)} onInherit={()=>inheritOptions('ct',assay,technical)} reviewNote={provisional?'Provisional · QC / experimental design requires review':'QC concerns reviewed; see recorded notes'} methods={{filters:technical?{run:runFilter,assay,qc:'Biological filters not applied'}:filterContext,design:experiment.experiment_design,context_revision:revision,exclusions:scopedExclusions,qc:scopedQuality}}
+  return <PublicationFigure key={`${technical?'qc':'ct'}:${assay}`} title={assay} subtitle={technical?'Technical control · raw Ct · QC only':stability?'Raw Ct per condition':savedRefs.includes(assay)?'Reference assay · raw Ct':'Target assay · raw Ct'} observations={points} kind="ct" technical={technical} colorDomain={colorDomain} labelFor={displayLabel} timeAxisLabel={timeAxisLabel} preset={allGenes?'single':preset} compactDisplay={panelMode} panelNotes={mode==='report'?'always':'print'} toolbar={toolbar} presentation={presentation} sharedRange={sharedRanges.ct} colorDomains={colorDomains} onOptionsChange={(options,scope)=>saveOptions('ct',assay,technical,options,scope)} onInherit={()=>inheritOptions('ct',assay,technical)} reviewNote={provisional?'Provisional · QC / experimental design requires review':'QC concerns reviewed; see recorded notes'} methods={{filters:technical?{run:runFilter,assay,qc:'Biological filters not applied'}:filterContext,design:experiment.experiment_design,context_revision:revision,exclusions:scopedExclusions,qc:scopedQuality}}
    missing={data.filter(r=>r.ct==null||r.status!=='detected').length} omitted={data.filter(r=>r.omit||experiment.measurement_exclusions?.[r.measurement_id!]).length}/>
  }
  function normalizedPoints(assay:string){
@@ -188,9 +199,10 @@ export function Dashboard({allGenes=false,experiment,versions,currentResult,refe
  }
  const pendingDesign=!experiment.experiment_design?.confirmed
  const qcGroups=groupQualityFlags(qcFlags)
- const status=dashboardStatus({staleCount,resultCount:candidates.length,qcFindings:qcGroups.filter(group=>group.unresolved>0).length,nameChecks:Object.keys(experiment.name_checks??{}).length,designConfirmed:!pendingDesign,draftDirty,confounded,mixedRoles})
+ const status=dashboardStatus({staleCount,resultCount:candidates.length,qcFindings:qcGroups.filter(group=>group.unresolved>0).length,nameChecks:Object.keys(experiment.name_checks??{}).length,designConfirmed:!pendingDesign,draftDirty,confounded,mixedRoles,layout:{blocking:(experiment.layout_checks??[]).filter(check=>check.blocking).length,unnamedWells:(experiment.layout_checks??[]).filter(check=>check.kind==='unnamed_wells').reduce((n,check)=>n+check.wells.length,0)}})
  const reviewQc=()=>inspect(effectiveAssay,'quality')
  const statusActions:Partial<Record<StatusItem['id'],StatusAction>>={
+  layout:{label:'Set up plate layout',onClick:onLayout},
   stale:{label:rebuilding?'Recalculating…':'Recalculate results',onClick:()=>void rebuild(),disabled:rebuilding||!allResults.length},
   qc:{label:'Review QC',onClick:reviewQc},names:{label:'Check sample names',onClick:onSamples},design:{label:'Confirm design',onClick:onSamples},draft:{label:'Open setup',onClick:onSetup},
  }
@@ -241,6 +253,12 @@ export function Dashboard({allGenes=false,experiment,versions,currentResult,refe
   {inspector}
  </>
 
+ const stabilityView=<>
+  <div className="figure-option-row">{figureOptions}{appearance}</div>
+  <StabilityView title={experiment.name} records={scope} measured={measured} genes={stabilityGenes} included={usableWell} groupOf={r=>analysisGroup(metadata(r))}
+   presentation={presentation} onGenes={onStabilityGenes} renderCt={assay=>rawFigure(assay)}/>
+ </>
+
  const reportView=<section className="report-figures" data-preset={preset}><div className="view-row">{modeToggle}</div><div className="figure-option-row">{figureOptions}{appearance}</div><div className="section-heading"><div><h3>Figure builder</h3><p>Selected assays and filters define the report. Each figure includes its data, methods and quality status.</p></div><button onClick={()=>window.print()}>Print selected report / Save PDF</button></div><div className="report-controls">{[['expression','Expression'],['target','Target Ct'],['reference','Reference Ct']].map(([id,label])=><label className="inline-check" key={id}><input type="checkbox" checked={reportKinds.includes(id)} onChange={e=>setReportKinds(current=>e.target.checked?[...current,id]:current.filter(v=>v!==id))}/>{label}</label>)}{viewToggle}</div>
   {reportKinds.includes('expression')&&<><h4>Normalized expression</h4>{gridHeader('expression',<p className="grid-provenance">References: {[...new Set(candidates.flatMap(r=>r.reference_assays))].join(' + ')||'—'} · {staleCount?'Some saved results are out of date; recalculate before reporting.':provisional?'Provisional: QC findings or the study design still need review.':'Saved analyses with reviewed QC.'}</p>)}<div className="figure-grid normalized-report">{targets.filter(hasResult).map(a=>normalizedFigure(a))}</div>{missingNote(targets.filter(a=>!hasResult(a)))}</>}
   {reportKinds.includes('target')&&<><h4>Target Ct</h4>{gridHeader('ct',<p className="grid-provenance">Raw Ct as measured; no normalization. {provisional?'Provisional: QC findings or the study design still need review.':'QC findings reviewed.'} Each panel lists its own missing and excluded wells.</p>)}<div className="figure-grid target-ct-grid">{targets.map(a=>rawFigure(a))}</div></>}
@@ -252,7 +270,7 @@ export function Dashboard({allGenes=false,experiment,versions,currentResult,refe
   <StatusBanner status={status} actions={statusActions} note={statusNote} secondary={secondaryActions}/>
   {rebuildStatus&&<div className="rebuild-status" role="status">{rebuildStatus}{rebuildErrors.length>0&&<details><summary>View unavailable outcomes</summary><ul>{rebuildErrors.map((e,i)=><li key={i}>{e.target_assay??shortRun(e.run_id??'')}: {e.reason}</li>)}</ul></details>}</div>}
   {filterBar}
-  {!selectedAssays.length?<div className="dashboard-empty">No assays selected. Select assays or reset filters.</div>:allGenes?allGenesView:mode==='overview'?overviewView:reportView}
+  {!selectedAssays.length?<div className="dashboard-empty">No assays selected. Select assays or reset filters.</div>:allGenes?allGenesView:stability?stabilityView:mode==='overview'?overviewView:reportView}
   <details className="study-details"><summary>Experimental design &amp; time origin</summary><p>Time origin: {experiment.experiment_design?.time_origin||'not recorded'}. Experimental unit: {experiment.experiment_design?.experimental_unit||'not recorded'}. Design: {experiment.experiment_design?.design_type??'unknown'}. {experiment.experiment_design?.confirmed?'Recorded as confirmed.':'Not confirmed yet, so results are provisional.'}</p><p>Reference evidence: {experiment.experiment_design?.reference_validation_note||'not recorded'}. Efficiency evidence: {experiment.experiment_design?.efficiency_note||'not recorded'}.</p><button className="quiet-button" onClick={onSamples}>Edit samples &amp; design</button></details>
   <details className="dashboard-analysis-register"><summary>Saved analysis set &amp; provenance</summary><p>One settings profile per run is shown. Older profiles remain in History.</p><div className="results-table-wrap"><table><thead><tr><th>Assay</th><th>Run</th><th>State</th><th>References</th><th>Baseline</th><th>Saved / analysis ID</th></tr></thead><tbody>{availability.map(a=><tr key={`${a.run}:${a.assay}`}><td>{a.assay}</td><td>{shortRun(a.run)}</td><td>{a.result?a.stale?'Out of date':'Current':a.reason}</td><td>{a.result?.reference_assays.join(', ')}</td><td>{a.result?.baseline_samples?.join('; ')}</td><td>{a.result?.created_at}<small>{a.result?.analysis_id}</small></td></tr>)}</tbody></table></div></details>
  </div>

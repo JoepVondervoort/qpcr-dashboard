@@ -60,9 +60,15 @@ def test_an_xlsx_saved_with_an_xls_extension_still_imports(tmp_path):
     assert import_qpcr_file(str(path))["record_count"] == 1
 
 
-def test_a_corrupt_xls_file_gives_a_readable_error(tmp_path):
-    path = tmp_path / "broken.xls"
-    path.write_bytes(b"not an excel file")
+@pytest.mark.parametrize("name, content", [
+    ("broken.xls", b"not an excel file"),
+    # openpyxl alone says "File is not a zip file", which means nothing to a scientist.
+    ("broken.xlsx", b"not an excel file"),
+    ("cut-off.xlsx", b"PK\x03\x04 truncated"),
+])
+def test_a_corrupt_excel_file_gives_a_readable_error(tmp_path, name, content):
+    path = tmp_path / name
+    path.write_bytes(content)
     with pytest.raises(ValueError, match="could not be read as an Excel file"):
         import_qpcr_file(str(path))
 

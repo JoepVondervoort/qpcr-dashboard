@@ -1,54 +1,16 @@
 from __future__ import annotations
 
 import csv
-import math
 import re
 from pathlib import Path
 from typing import Any
 
+from .cells import ct_status, infer_well, is_omitted, normalize_key, safe_value
+from .lab_tables import read_lab_workbook, segments
+from .workbook_notes import own_analysis, without_ct, workbook_metadata
 from .workbooks import SheetRows, read_xls, read_xlsx
 
-
-def normalize_key(value: Any) -> str:
-    if value is None:
-        return ""
-    return re.sub(r"[^a-z0-9]+", " ", str(value).strip().lower()).strip()
-
-
-def infer_well(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip().upper()
-    if re.fullmatch(r"[A-P](?:[1-9]|1[0-9]|2[0-4])", text):
-        return text
-    return None
-
-
-def _safe_value(value: Any) -> Any:
-    if hasattr(value, "isoformat"):
-        return value.isoformat()
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    return str(value)
-
-
-def _number(value: Any) -> float | None:
-    if value is None or str(value).strip().lower() in {
-        "",
-        "undetermined",
-        "undet",
-        "na",
-        "n/a",
-        "nan",
-        "none",
-        "-",
-    }:
-        return None
-    try:
-        number = float(str(value).replace(",", "").strip())
-        return number if math.isfinite(number) else None
-    except (TypeError, ValueError):
-        return None
+__all__ = ["import_qpcr_file", "infer_well", "normalize_key"]
 
 
 def _header_columns(values: list[Any]) -> dict[str, int]:
@@ -94,6 +56,12 @@ def _plate_size(rows: list[tuple[Any, ...]], header_index: int) -> int | None:
     return None
 
 
+def _instrument_file(value: Any) -> str | None:
+    """The instrument's own file name ("…_hkg_af22.eds"), without the folder it was saved in."""
+    name = re.split(r"[\\/]", str(value))[-1].strip() if value is not None else ""
+    return name or None
+
+
 def _parse_rows(
     rows: list[tuple[Any, ...]],
     sheet_name: str,
@@ -102,7 +70,7 @@ def _parse_rows(
     default_run: str,
     is_workbook: bool,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
-    sections: list[tuple[int, dict[str, int], str, int | None]] = []
+    sections: list[tuple[int, dict[str, int], str, int | None, str | None]] = []
     for index, row in enumerate(rows):
         # A result header names at least four columns; skipping numeric rows keeps raw-curve sheets fast.
         if sum(isinstance(value, str) for value in row) < 4:
@@ -121,6 +89,7 @@ def _parse_rows(
                 columns,
                 str(run_name).strip() if run_name is not None else default_run,
                 _plate_size(rows, index),
+                _instrument_file(_metadata_before(rows, index, "Experiment File Name")),
             )
         )
 
@@ -129,7 +98,7 @@ def _parse_rows(
     warnings: list[str] = []
     seen_measurements: set[tuple[str, str, str]] = set()
 
-    for section_index, (header_index, columns, run_name, plate_size) in enumerate(sections):
+    for section_index, (header_index, columns, run_name, plate_size, instrument_file) in enumerate(sections):
         run_id = f"{sheet_name}:{header_index + 1}:{run_name}"
         run_records = 0
         next_header = (
@@ -174,17 +143,8 @@ def _parse_rows(
             omit_value = (
                 row[columns["omit"]] if "omit" in columns and columns["omit"] < len(row) else None
             )
-            omit_text = str(omit_value).strip().lower()
-            omitted = omit_text in {"true", "yes", "1", "y", "t", "omit", "excluded"}
-            ct = _number(ct_value)
-            if ct is not None:
-                status = "detected"
-            elif ct_value is None or str(ct_value).strip() == "":
-                status = "missing"
-            elif str(ct_value).strip().lower() in {"undetermined", "undet"}:
-                status = "undetermined"
-            else:
-                status = "invalid"
+            omitted = is_omitted(omit_value)
+            ct, status = ct_status(ct_value)
             key = (run_id, well, assay)
             if key in seen_measurements:
                 warnings.append(
@@ -203,12 +163,12 @@ def _parse_rows(
                 "run_id": run_id,
                 "run_name": run_name,
                 "well": well,
-                "well_number": _safe_value(get_column("well_number")),
+                "well_number": safe_value(get_column("well_number")),
                 "sample": sample or "Unassigned sample",
                 "assay": assay or "Unassigned assay",
-                "reporter": _safe_value(get_column("reporter")),
-                "task": _safe_value(get_column("task")),
-                "ct_source_value": _safe_value(ct_value),
+                "reporter": safe_value(get_column("reporter")),
+                "task": safe_value(get_column("task")),
+                "ct_source_value": safe_value(ct_value),
                 "ct": ct,
                 "status": status,
                 "omit": omitted,
@@ -225,53 +185,48 @@ def _parse_rows(
                 "record_count": run_records,
                 "plate_size": plate_size,
                 "source_file": source_file,
+                "instrument_file": instrument_file,
             }
         )
 
     return records, runs, warnings
 
 
-def _import_csv(path: Path, file_name: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+Parsed = tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], dict[str, Any]]
+
+
+def _import_csv(path: Path, file_name: str) -> Parsed:
     with path.open("r", newline="", encoding="utf-8-sig") as file:
-        reader = csv.reader(file)
-        rows = [tuple(row) for row in reader]
+        rows = [tuple(cell if cell.strip() else None for cell in row) for row in csv.reader(file)]
     stem = Path(file_name).stem
-    return _parse_rows(
-        rows,
-        stem,
-        file_name,
-        default_run=stem,
-        is_workbook=False,
-    )
+    if any(len(segments(row, index)) > 1 for index, row in enumerate(rows)):
+        return _lab_or_nothing([(stem, rows)], file_name)
+    records, runs, warnings = _parse_rows(rows, stem, file_name, default_run=stem, is_workbook=False)
+    if records:
+        return records, runs, warnings, {"kind": "instrument export"}
+    return _lab_or_nothing([(stem, rows)], file_name)
 
 
-def _import_workbook(worksheet_rows: SheetRows, file_name: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
-    all_candidates: list[
-        tuple[str, list[dict[str, Any]], list[dict[str, Any]], list[str]]
-    ] = []
-    for sheet_name, rows in worksheet_rows:
-        records, runs, warnings = _parse_rows(
-            rows,
-            sheet_name,
-            file_name,
-            default_run=Path(file_name).stem,
-            is_workbook=True,
-        )
-        if runs:
-            all_candidates.append((sheet_name, records, runs, warnings))
+def _lab_or_nothing(sheets: SheetRows, file_name: str) -> Parsed:
+    """No instrument result section: Ct tables pasted into a lab workbook, or a plain account of what the file holds."""
+    records, runs, warnings, source = read_lab_workbook(sheets, file_name, workbook_metadata(sheets))
+    if not records:
+        return [], [], [without_ct(sheets)], {"kind": "no results"}
+    return records, runs, warnings, {**source, "analysis": own_analysis(sheets)}
 
-    if not all_candidates:
-        return [], [], [
-            "No instrument result sections were found. Expected an Experiment Name metadata field followed by Well, Sample Name, Target Name, and Ct/Cq columns."
-        ]
 
-    # Workbook exports with run metadata are authoritative; derived worksheets
-    # may repeat raw measurements but do not have the instrument run metadata.
-    selected = all_candidates
-    records = [record for _, candidate_records, _, _ in selected for record in candidate_records]
-    runs = [run for _, _, candidate_runs, _ in selected for run in candidate_runs]
-    warnings = [warning for _, _, _, candidate_warnings in selected for warning in candidate_warnings]
-    return records, runs, warnings
+def _import_workbook(worksheet_rows: SheetRows, file_name: str) -> Parsed:
+    """Instrument result sections are authoritative; derived worksheets may repeat their Ct values without run metadata."""
+    found = [(sheet_name, _parse_rows(rows, sheet_name, file_name, default_run=Path(file_name).stem, is_workbook=True))
+             for sheet_name, rows in worksheet_rows]
+    found = [(sheet_name, parsed) for sheet_name, parsed in found if parsed[1]]
+    if not found:
+        return _lab_or_nothing(worksheet_rows, file_name)
+    records = [record for _, (sheet_records, _, _) in found for record in sheet_records]
+    runs = [run for _, (_, sheet_runs, _) in found for run in sheet_runs]
+    warnings = [warning for _, (_, _, sheet_warnings) in found for warning in sheet_warnings]
+    instrument_sheets = {sheet_name for sheet_name, _ in found}
+    return records, runs, warnings, {"kind": "instrument export", "analysis": own_analysis(worksheet_rows, skip=instrument_sheets)}
 
 
 def import_qpcr_file(path: str, display_name: str | None = None) -> dict[str, Any]:
@@ -280,13 +235,20 @@ def import_qpcr_file(path: str, display_name: str | None = None) -> dict[str, An
     file_name = display_name or file_path.name
     suffix = file_path.suffix.lower()
     if suffix == ".csv":
-        records, runs, warnings = _import_csv(file_path, file_name)
+        records, runs, warnings, source = _import_csv(file_path, file_name)
     elif suffix in {".xlsx", ".xlsm"}:
-        records, runs, warnings = _import_workbook(read_xlsx(file_path), file_name)
+        records, runs, warnings, source = _import_workbook(read_xlsx(file_path), file_name)
     elif suffix == ".xls":
-        records, runs, warnings = _import_workbook(read_xls(file_path), file_name)
+        records, runs, warnings, source = _import_workbook(read_xls(file_path), file_name)
     else:
         raise ValueError(f"Unsupported file type: {suffix}. Use CSV, XLSX, XLSM or XLS.")
+
+    if source.get("kind") == "lab workbook":
+        warnings.append("Read raw Ct/Cq measurements from tables in a lab workbook.")
+    for analysis in source.get("analysis", []):
+        warnings.append(f"{analysis['sheet']}: existing {', '.join(analysis['kinds'])} calculations recognized; only raw Ct/Cq measurements are imported. The workbench calculates its own analysis.")
+    for copy in source.get("copies", []):
+        warnings.append(f"{copy['sheet']}: repeated Ct table left out; measurements imported from {copy['same_as']}.")
 
     return {
         "file_name": file_name,
@@ -295,4 +257,5 @@ def import_qpcr_file(path: str, display_name: str | None = None) -> dict[str, An
         "record_count": len(records),
         "warning_count": len(warnings),
         "warnings": warnings,
+        "source": {"file": file_name, **source},
     }

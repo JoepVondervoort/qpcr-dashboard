@@ -1,0 +1,51 @@
+/* Reference-gene stability experiments: raw Ct per gene, geNorm ranking, pairwise variation. */
+.stability-view { display:grid; gap:16px; margin-top:8px; }
+.stability-lede { margin:4px 0 0; color:var(--muted); max-width:72ch; }
+.stability-genes { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:0; padding:12px 14px; border:1px solid var(--rule); border-radius:var(--radius); background:var(--surface); }
+.stability-genes legend { padding:0 4px; font-size:12px; font-weight:600; color:var(--ink-soft); }
+.stability-genes .helper-text { flex-basis:100%; margin:4px 0 0; }
+.stability-genes .helper-text:empty { display:none; }
+.stability-chip { gap:6px; cursor:pointer; }
+.stability-chip:has(input:checked) { background:var(--accent-soft); border-color:#6da29e; color:#175a5f; }
+.stability-chip input { margin:0; }
+.stability-summary { padding:12px 16px; border-left:3px solid var(--accent); border-radius:0 var(--radius) var(--radius) 0; background:var(--accent-soft); }
+.stability-summary p { margin:0 0 4px; max-width:90ch; }
+.stability-summary p:last-child { margin-bottom:0; }
+.stability-card { margin:0; padding:12px 14px; border:1px solid var(--rule); border-radius:var(--radius); background:var(--surface); box-shadow:var(--shadow-card); min-width:0; }
+.stability-card figcaption { display:grid; gap:2px; margin-bottom:8px; }
+.stability-card figcaption span { color:var(--muted); font-size:12.5px; }
+.stability-card svg { display:block; height:auto; }
+.stability-pair { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr)); gap:16px; }
+.stability-figure-frame { position:relative; }
+.stability-tooltip { position:absolute; z-index:2; transform:translate(12px,-50%); display:grid; gap:1px; min-width:160px; max-width:240px; padding:8px 10px; border:1px solid var(--rule-strong); border-radius:var(--radius); background:#fff; box-shadow:var(--shadow-card); font-size:12px; color:var(--ink-soft); pointer-events:none; }
+.stability-tooltip strong { color:var(--ink); }
+.stability-tooltip span[data-active=true] { color:var(--ink); font-weight:600; }
+.stability-figure-frame:has(circle:hover) { cursor:crosshair; }
+.stability-table { min-width:640px; }
+.stability-table caption { text-align:left; font-weight:600; padding:0 0 6px; }
+.stability-table th[scope=row] { text-align:left; font-weight:600; }
+.stability-note { display:inline-block; padding:1px 6px; border-radius:4px; background:#f6ece3; color:#7a3f20; font-size:12px; }
+.stability-samples { margin-top:10px; }
+.stability-samples table { min-width:480px; font-size:12.5px; }
+.stability-samples small { color:var(--muted); }
+.stability-genes[aria-busy=true] { cursor:progress; }
+.stability-methods p { max-width:90ch; color:var(--ink-soft); }
+.stability-subheading { margin:8px 0 0; }
+.stability-ct-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr)); gap:14px; }
+.stability-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.experiment-type-question { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; }
+.experiment-type-question ul { margin:4px 0 0; padding-left:18px; color:var(--ink-soft); }
+.experiment-type-question .question-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.experiment-type-choice { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; margin:0 0 12px; }
+.experiment-type-choice > span { font-size:12.5px; font-weight:600; color:var(--ink-soft); }
+.experiment-type-choice .segmented { height:auto; flex-wrap:wrap; }
+.library-type { display:block; margin-top:4px; }
+.replicate-question { margin:0 0 12px; }
+.replicate-groups { display:grid; gap:6px; max-height:260px; overflow:auto; margin:8px 0; padding-right:4px; }
+.replicate-groups label { align-items:flex-start; gap:8px; font-weight:400; }
+.replicate-groups input { margin-top:3px; }
+.replicate-note { display:block; color:var(--muted); }
+.replicate-question .question-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+@media (max-width:640px) {
+  .stability-tooltip { transform:translate(-50%,12px); }
+}

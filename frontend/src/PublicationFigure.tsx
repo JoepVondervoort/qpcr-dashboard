@@ -277,7 +277,9 @@ export function PublicationFigure({title, subtitle, observations, kind, bars=fal
               {!technical && mean(member.values)!=null && <circle cx={cx+stableJitter(member.sample)*spread*1.6} cy={y(mean(member.values)!)} data-sample={member.sample} r={style.pointSize*.8} fill={pointPaint(member)} fillOpacity={style.pointFilled?.9:.22} stroke={pointPaint(member)} strokeWidth={style.pointFilled?.8:1}><title>{member.sample} · {member.categoryLabel} · {kind==='ct'?'biological sample Ct mean':'fold change'} {mean(member.values)!.toFixed(3)} · {member.source}</title></circle>}
             </g>)}
             {!technical && v.mean!=null && <>
-              {v.sd!=null && v.upper!=null && v.lower!=null && <g stroke={paint.outline} strokeWidth={Math.max(1,style.outlineWidth)} strokeLinecap="round"><line x1={cx} x2={cx} y1={y(v.upper)} y2={y(v.lower)}/><line x1={cx-4} x2={cx+4} y1={y(v.upper)} y2={y(v.upper)}/><line x1={cx-4} x2={cx+4} y1={y(v.lower)} y2={y(v.lower)}/></g>}
+              {/* A white halo keeps the SD readable on top of many sample points in the same color; bars need none. */}
+              {v.sd!=null && v.upper!=null && v.lower!=null && [...(bars?[]:[{halo:true,stroke:'#fff',width:Math.max(1,style.outlineWidth)+3}]),{halo:false,stroke:paint.outline,width:Math.max(1,style.outlineWidth)}].map(layer=>
+                <g key={String(layer.halo)} data-sd-halo={layer.halo||undefined} stroke={layer.stroke} strokeWidth={layer.width} strokeLinecap="round"><line x1={cx} x2={cx} y1={y(v.upper!)} y2={y(v.lower!)}/><line x1={cx-5} x2={cx+5} y1={y(v.upper!)} y2={y(v.upper!)}/><line x1={cx-5} x2={cx+5} y1={y(v.lower!)} y2={y(v.lower!)}/></g>)}
               {!bars&&<circle data-mean-marker="true" cx={cx} cy={y(v.mean)} r={style.pointSize+.8} fill={paint.outline} stroke="#fff" strokeWidth="1.5"><title>{labelFor(s.label)} · {categories.find(c=>c.key===v.category)?.label}: {logY?'geometric mean':'mean'} {compact(v.mean)}{kind==='expression'?'×':''} · n = {v.n}</title></circle>}
             </>}
           </g>

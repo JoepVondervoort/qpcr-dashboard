@@ -225,7 +225,19 @@ p.heat-scale { gap:8px; } p.heat-scale i { width:90px; }
 }
 
 /* Several plates in one upload */
-.upload-files { margin:0 0 12px; padding:0 0 0 18px; color:#dce8eb; font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
+.upload-files { display:grid; gap:2px; max-height:220px; overflow-y:auto; margin:0 0 12px; padding:0; list-style:none; color:#dce8eb; font-size:12px; line-height:1.5; }
+.upload-files li { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:3px 4px 3px 8px; border-radius:6px; background:#ffffff0d; }
+.upload-files span { min-width:0; overflow-wrap:anywhere; }
+.upload-remove { flex:none; min-height:0; width:26px; height:26px; padding:0; border:0; border-radius:4px; background:transparent; color:#bcced3; font-size:17px; line-height:1; box-shadow:none; }
+.upload-remove:hover:not(:disabled) { background:#ffffff1f; color:#fff; }
+.upload-failures { display:grid; gap:6px; margin:0 0 12px; padding:10px 12px; list-style:none; border-radius:8px; background:#5e2f2a; color:#f3dcd8; font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+.upload-failures strong { display:block; color:#fff; }
+/* Files dragged over the window: dropping them anywhere opens the upload. */
+.file-drop-overlay { position:fixed; inset:10px; z-index:60; display:grid; place-items:center; border:2px dashed var(--accent); border-radius:14px; background:#f6f7f5d9; pointer-events:none; }
+.file-drop-overlay p { display:grid; gap:6px; max-width:min(460px,calc(100vw - 52px)); margin:0; padding:18px 22px; border-radius:12px; background:#112c36; color:#dce8eb; font-size:13px; line-height:1.5; text-align:center; box-shadow:0 12px 32px #122c3633; }
+.file-drop-overlay strong { color:#fff; font-size:17px; }
+.library-notice:empty { display:none; }
+.library-notice .status-bar { margin:0 0 14px; }
 .plate-choice { display:grid; gap:8px; margin:0 0 14px; padding:0; border:0; min-width:0; }
 .plate-choice legend { padding:0; margin-bottom:6px; color:#dce8eb; font-size:13px; font-weight:600; }
 .plate-choice label { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px; align-items:start; cursor:pointer; }
@@ -239,6 +251,12 @@ p.heat-scale { gap:8px; } p.heat-scale i { width:90px; }
 .add-plates label { display:grid; gap:4px; font-size:12px; color:var(--ink-soft); }
 .add-plates .setup-hint { margin:0; font-size:12px; }
 .add-plates button { justify-self:start; }
+.add-plates.is-dropping { outline:2px dashed var(--accent); outline-offset:4px; border-radius:var(--radius); background:var(--accent-soft); }
+.add-plates.is-dropping summary::after { content:' · drop to add to this experiment'; font-weight:500; }
+.add-plates-files { display:grid; gap:2px; margin:0; padding:0; list-style:none; font-size:12px; color:var(--ink-soft); }
+.add-plates-files li { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:2px 2px 2px 8px; border-radius:4px; background:var(--hover); }
+.add-plates-files span { min-width:0; overflow-wrap:anywhere; }
+.add-plates-files .icon-button { justify-self:auto; font-size:16px; padding:2px 6px; }
 /* Sample names read with a guess */
 .name-checks { margin:12px 0; padding:12px 14px; border:1px solid #e6d6a8; border-radius:var(--radius); background:#fdf8ea; color:var(--ink-soft); font-size:12.5px; }
 .name-checks p { margin:0 0 6px; color:var(--ink-soft); line-height:1.6; }

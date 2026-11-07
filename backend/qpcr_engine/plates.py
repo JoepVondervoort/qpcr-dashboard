@@ -8,12 +8,13 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from .layout import UNASSIGNED_ASSAY, UNASSIGNED_SAMPLE, placeholder_names
+
 Record = dict[str, Any]
 Run = dict[str, Any]
 IsControl = Callable[[Record], bool]
 
 PLATE_SEPARATOR = " › "
-UNASSIGNED_SAMPLE, UNASSIGNED_ASSAY = "Unassigned sample", "Unassigned assay"
 _NAME_SEPARATORS = "_- "
 
 
@@ -45,12 +46,15 @@ def combined_run_name(names: list[str]) -> str:
 
 
 def _plate_entry(run: Run) -> dict[str, Any]:
-    return {key: run.get(key) for key in ("name", "sheet", "header_row", "record_count", "plate_size", "source_file")}
+    return {key: run.get(key) for key in ("name", "sheet", "header_row", "record_count", "plate_size", "source_file", "instrument_file")}
 
 
 def _shared_measurements(existing: list[Record], plate: list[Record], is_control: IsControl) -> list[tuple[str, str]]:
-    # Wells without a sample or assay name are never analyzed, so they cannot be pooled.
-    named = lambda r: not is_control(r) and r["sample"] != UNASSIGNED_SAMPLE and r["assay"] != UNASSIGNED_ASSAY
+    # Wells without a sample or assay name are never analyzed, so they cannot be pooled. A name on more
+    # wells than technical replicates is a placeholder, not a sample: the plate layout check asks for real names.
+    placeholders = placeholder_names(existing, is_control) | placeholder_names(plate, is_control)
+    named = lambda r: (not is_control(r) and r["sample"] != UNASSIGNED_SAMPLE and r["assay"] != UNASSIGNED_ASSAY
+                       and r["sample"] not in placeholders)
     measured = {(r["sample"], r["assay"]) for r in existing if named(r)}
     return sorted({(r["sample"], r["assay"]) for r in plate if named(r)} & measured)
 

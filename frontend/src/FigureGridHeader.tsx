@@ -8,7 +8,7 @@ export function FigureGridHeader({series,colorOf,labelFor,kind,scale,bars,signif
  const marker=kind==='ct'?'filled marker: mean ± SD':log?'filled marker: geometric mean ×/÷ SD':'filled marker: mean ± SD'
  return <div className="figure-grid-header">
   {series.length>0&&<ul className="grid-legend" aria-label="Series in these figures">{series.map(label=>{const color=colorOf(label);return <li key={label}>{color&&<i style={{background:color}} aria-hidden="true"/>}{labelFor(label)}</li>})}</ul>}
-  <p className="grid-key">{axis}{timeUnit?` · X: time (${timeUnit==='hour'?'hours':'days'})`:''} · {marker} · light circles: biological samples{kind==='ct'?' · faint dots: technical wells':''}{kind==='expression'?' · dashed line: 1×':''}{bars?' · bars start at 1×':''}{significance?' · *: Holm-adjusted difference from baseline (p in each panel’s notes)':''} · export a panel for its full legend and notes</p>
-  {children}
+  <details className="grid-reading-guide"><summary>{axis}{timeUnit?` · Time (${timeUnit==='hour'?'hours':'days'})`:''} · Reading guide</summary><p className="grid-key">{marker} · light circles: biological samples{kind==='ct'?' · faint dots: technical wells':''}{kind==='expression'?' · dashed line: 1×':''}{bars?' · bars start at 1×':''}{significance?' · *: Holm-adjusted difference from baseline (p in each panel’s notes)':''} · export a panel for its full legend and notes</p>{children}</details>
+  <div className="print-only grid-print-key"><p className="grid-key">{axis}{timeUnit?` · X: time (${timeUnit==='hour'?'hours':'days'})`:''} · {marker} · light circles: biological samples{kind==='ct'?' · faint dots: technical wells':''}{kind==='expression'?' · dashed line: 1×':''}{bars?' · bars start at 1×':''}{significance?' · *: Holm-adjusted difference from baseline (p in each panel’s notes)':''}</p>{children}</div>
  </div>
 }

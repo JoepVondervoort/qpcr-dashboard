@@ -26,7 +26,7 @@ function describe(well:string,rows:WellRow[]):string {
 /** The plate as the workbench reads it: every well's Ct, coloured by the condition (or sample, gene, Ct) it belongs to. */
 export function PlateCheckPlate({run,rows,fills,flagged}:{run:Run|undefined;rows:WellRow[];fills:Fills;flagged:Set<string>}) {
  const plates=run?.plates??[]
- const [plateName,setPlateName]=useState(''),[gene,setGene]=useState('all'),[colorBy,setColorBy]=useState<ColorBy>('group'),[selected,setSelected]=useState<string|null>(null)
+ const [plateName,setPlateName]=useState(''),[gene,setGene]=useState('all'),[colorBy,setColorBy]=useState<ColorBy>('group'),[selected,setSelected]=useState<string|null>(null),[showValues,setShowValues]=useState(false)
  const plate=plates.find(p=>p.name===plateName)??plates[0]
  const onPlate=rows.filter(r=>!plate||r.plate===plate.name)
  const {rows:height,cols:width}=plateDimensions(plate?plate.plate_size:run?.plate_size)
@@ -44,6 +44,7 @@ export function PlateCheckPlate({run,rows,fills,flagged}:{run:Run|undefined;rows
    {plates.length>1&&<div className="segmented" role="group" aria-label="Plate in combined run">{plateNames(run!).map(name=><button key={name} aria-pressed={name===plate?.name} onClick={()=>{setPlateName(name);setSelected(null);setGene('all')}}>{name}</button>)}</div>}
    <div className="segmented" role="group" aria-label="Color wells by">{COLOR_BY.map(([value,label])=><button key={value} aria-pressed={colorBy===value} onClick={()=>setColorBy(value)}>{label}</button>)}</div>
    <label className="inline-select">Gene<select aria-label="Gene on the plate" value={gene} onChange={e=>setGene(e.target.value)}><option value="all">All genes</option>{genes.map(g=><option key={g}>{g}</option>)}</select></label>
+   <label className="inline-check plate-values-toggle"><input type="checkbox" checked={showValues} onChange={e=>setShowValues(e.target.checked)}/>Show Ct values</label>
   </div>
   <div className="plate-layout">
    <div className="plate-map check-map" data-size={height===16?384:96} data-color={colorBy} style={{gridTemplateColumns:`1.5em repeat(${width},minmax(0,1fr))`}} role="group" aria-label={`Plate check, ${plate?.name??run?.name??''}`}>
@@ -52,7 +53,7 @@ export function PlateCheckPlate({run,rows,fills,flagged}:{run:Run|undefined;rows
      const well=wellName(row,col),here=shown(well),first=lowestCt(here),hidden=!here.length&&(wells.get(well)??[]).length>0
      const label=hidden?`${well}: ${gene} not measured in this well`:describe(well,here)
      return <button key={well} className="plate-cell check-cell" data-empty={!here.length&&!hidden} data-filtered={hidden} data-role={first?.role} data-excluded={here.some(r=>Boolean(r.excluded))} data-flagged={here.some(r=>flagged.has(r.id))} data-related={related.has(well)&&well!==selected} data-dark={colorBy==='ct'&&Boolean(first?.detected)&&ctAlpha(first!.ct!)>=DARK_ALPHA}
-      aria-pressed={selected===well} aria-label={label} title={label} style={{background:fillOf(first)}} onClick={()=>setSelected(well)}>{ctText(first)}</button>})])}
+      aria-pressed={selected===well} aria-label={label} title={label} style={{background:fillOf(first)}} onClick={()=>setSelected(well)}>{showValues||colorBy==='ct'?ctText(first):first?<span className="well-presence" aria-hidden="true"/>:null}</button>})])}
    </div>
    <aside className="plate-detail">
     {selected?<WellDetail well={selected} rows={chosen} sampleRows={sample?onPlate.filter(r=>r.role==='sample'&&r.sample===sample.sample):[]}/>:<p>Select a well to see its Ct, its sample and that sample's condition. The sample's other wells are outlined.</p>}

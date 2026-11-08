@@ -1,0 +1,249 @@
+/* Workspace composition. Figure colors, scales and exported styles remain in figureTheme. */
+:root {
+  --paper:#f5f7f6;
+  --rule:#dfe7e3;
+  --control-h:34px;
+  --radius:7px;
+}
+body { font-size:14px; }
+button,summary,input,select { -webkit-tap-highlight-color:transparent; }
+button:focus-visible,summary:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.main-panel { min-width:0; padding:30px 36px 48px; }
+.workspace-rail { width:184px; flex-basis:184px; padding:30px 16px; background:#19373d; }
+.workspace-brand { letter-spacing:-.04em; }
+.workspace-brand span { letter-spacing:0; }
+.rail-link { border-radius:8px; font-size:14px; }
+.rail-link.active { background:#ffffff0c; border-color:#ffffff18; }
+.rail-upload { margin-top:8px; border-color:#ffffff30; border-radius:8px; }
+.back-library { margin:0 0 18px; font-size:12px; }
+
+/* A short identity block; provenance is available in Details. */
+.topbar { display:flex; align-items:center; gap:20px; margin-bottom:22px; }
+.topbar>div:first-child { flex:1; min-width:0; }
+.topbar .eyebrow { margin:0 0 7px; font-size:10.5px; letter-spacing:.14em; }
+.experiment-title { gap:6px 10px; }
+.experiment-title h2 { font-size:25px; line-height:1.25; letter-spacing:-.035em; overflow-wrap:anywhere; }
+.experiment-summary { margin:9px 0 0; font-size:12.5px; color:var(--muted); }
+.rename-button { opacity:.4; font-size:11.5px; }
+.experiment-title:hover .rename-button,.rename-button:focus-visible { opacity:1; }
+.experiment-header-actions { display:flex; align-items:center; flex-shrink:0; gap:8px; }
+.setup-toggle { white-space:nowrap; }
+.experiment-details { position:relative; }
+.experiment-details>summary,.figure-appearance>summary { display:flex; align-items:center; justify-content:center; gap:12px; min-height:var(--control-h); padding:0 12px; border:1px solid var(--rule-strong); border-radius:var(--radius); background:#fff; font-size:12.5px; font-weight:500; color:var(--ink-soft); cursor:pointer; list-style:none; white-space:nowrap; }
+.experiment-details>summary::after,.figure-appearance>summary::after { content:''; width:10px; height:6px; background:var(--chevron) center/contain no-repeat; }
+.experiment-details>summary::-webkit-details-marker,.figure-appearance>summary::-webkit-details-marker { display:none; }
+.experiment-details[open]>summary,.figure-appearance[open]>summary { background:var(--accent-soft); border-color:#aac8c4; color:var(--accent); }
+.experiment-details-body { position:absolute; z-index:35; right:0; top:calc(100% + 10px); width:min(420px,calc(100vw - 40px)); padding:22px; max-height:70vh; overflow:auto; background:#fff; border:1px solid var(--rule); border-radius:12px; box-shadow:0 12px 40px #19373d1a; }
+.experiment-details-body h3 { margin:0 0 6px; font-size:17px; }
+.experiment-details-body h4 { margin:18px 0 6px; font-size:12px; }
+.experiment-sources { padding:0; margin:0; list-style:none; font-size:12.5px; line-height:1.6; color:var(--muted); overflow-wrap:anywhere; }
+.experiment-highlights { display:grid; gap:7px; padding:14px 0; margin-top:12px; border-top:1px solid var(--rule); font-size:12.5px; }
+.experiment-details-body .add-plates { margin:0; }
+.view-tabs { display:flex; flex-wrap:nowrap; gap:26px; margin:0 0 20px; overflow-x:auto; }
+.view-tabs button { flex-shrink:0; padding:0 0 12px; font-size:13px; }
+
+/* Use grid so the headline's horizontal flex basis never becomes a tall column. */
+.review-banner { position:relative; display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:10px 16px; align-items:center; padding:12px 16px; margin:0 0 20px; min-height:58px; box-shadow:none; }
+.review-banner .status-headline { display:block; flex:none; min-width:0; margin:0; line-height:1.5; }
+.review-banner .status-headline strong { font-size:12.5px; }
+.review-banner .status-note { display:block; font-size:12px; }
+.status-details { position:relative; font-size:12px; color:var(--muted); }
+.status-details>summary { cursor:pointer; white-space:nowrap; }
+.status-details[open]>summary { color:var(--accent); }
+.status-details .status-items { position:absolute; z-index:30; right:0; top:calc(100% + 14px); display:grid; gap:12px; width:min(370px,calc(100vw - 48px)); padding:18px; background:#fff; border:1px solid var(--rule); border-radius:10px; box-shadow:0 10px 32px #19373d18; }
+.status-items li { padding-left:12px; border-left:2px solid #c7d6d1; }
+.status-items li[data-level=review] { border-left-color:#d3ae72; }
+.status-items .text-button { font-size:12.5px; line-height:1.5; }
+.review-banner .status-actions { display:flex; flex-wrap:wrap; gap:6px; margin:0; }
+.status-actions button { min-height:32px; border-radius:6px; }
+
+/* Filtering is one primary row, with the less common controls disclosed below. */
+.dashboard-toolbar { margin:0 0 14px; padding:0 0 16px; border-bottom:1px solid var(--rule); }
+.primary-filters { display:flex; flex-wrap:wrap; align-items:end; gap:12px; }
+.primary-filters>label { display:grid; gap:5px; flex:1 1 150px; max-width:250px; min-width:0; margin:0; font-size:11.5px; color:var(--muted); }
+.primary-filters>label:nth-child(3) { flex:0 1 135px; }
+.primary-filters select { width:100%; min-width:0; }
+.more-filters { display:flex; align-items:center; justify-content:center; gap:12px; white-space:nowrap; }
+.more-filters[aria-expanded=true] { color:var(--accent); border-color:#aac8c4; background:var(--accent-soft); }
+.active-filter-count { display:inline-flex; align-items:center; justify-content:center; min-width:18px; height:18px; border-radius:50%; background:var(--accent); color:white; font-size:10px; }
+.filter-scope { display:flex; align-items:center; flex-wrap:wrap; justify-content:end; gap:4px 12px; min-height:34px; margin-left:auto; color:var(--muted); font-size:11.5px; }
+.filter-scope button { font-size:11.5px; }
+.extended-filters { display:flex; flex-wrap:wrap; align-items:end; gap:16px 24px; margin-top:14px; padding:16px; background:#fff; border:1px solid var(--rule); border-radius:10px; }
+.extended-filters[hidden] { display:none; }
+.extended-filters .factor-group { display:grid; gap:6px; font-size:12px; }
+.extended-filters .assay-filter { padding:0; align-self:end; }
+.extended-filters>p { flex-basis:100%; margin:0; color:var(--muted); font-size:11.5px; }
+.extended-filters .edit-labels { margin-left:auto; padding:6px 0; font-size:12px; }
+
+/* View controls sit directly above the visualization. */
+.dashboard-view-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:0; margin:0 0 18px; border:0; }
+.dashboard-view-toolbar .view-row { margin:0; }
+.view-toolbar-actions { display:flex; align-items:center; gap:10px; margin-left:auto; }
+.all-genes-controls>label:first-child { flex:1 1 170px; max-width:210px; min-width:0; display:grid; gap:5px; }
+.all-genes-controls>label:first-child>input { width:100%; }
+.all-genes-controls label { font-size:11.5px; }
+.pinned-view-note { font-size:12px; color:var(--accent); }
+.figure-grid-header { gap:8px 18px; padding:0 0 14px; margin:0 0 18px; }
+.grid-legend { font-size:12px; font-weight:500; gap:6px 20px; }
+.grid-reading-guide { margin-left:auto; font-size:11.5px; color:var(--muted); }
+.grid-reading-guide>summary { cursor:pointer; }
+.grid-reading-guide[open] { flex-basis:100%; margin-left:0; }
+.grid-reading-guide .grid-key { margin:8px 0 0; }
+.grid-reading-guide .grid-note { margin-top:6px; }
+.gene-panel-grid { align-items:stretch; gap:18px; }
+.gene-panel-grid[data-columns=auto] { grid-template-columns:repeat(3,minmax(0,1fr)) !important; }
+.gene-panel { display:flex; flex-direction:column; min-width:0; }
+.gene-panel .figure-card { flex:1; border-radius:12px; box-shadow:0 2px 4px #19373d03; }
+.gene-panel .figure-heading { padding:14px 14px 2px; gap:6px; }
+.gene-panel .figure-identity h4 { font-size:16px; }
+.gene-panel .figure-action { padding:0 5px; font-size:11.5px; }
+.gene-panel .plot-viewport { padding:4px 10px 12px; border-radius:0 0 11px 11px; }
+.expression-empty { grid-column:1/-1; padding:28px; background:var(--surface); border:1px solid var(--rule); border-radius:12px; }
+.expression-empty .eyebrow { margin:0 0 10px; font-size:10.5px; }
+.expression-empty h3 { margin:0 0 10px; font-size:21px; letter-spacing:-.025em; }
+.expression-empty>p:not(.eyebrow) { max-width:700px; margin:0; color:var(--muted); font-size:14px; line-height:1.7; }
+.expression-empty-actions { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-top:20px; }
+.expression-empty-actions button { font-size:13px; }
+.gene-panel-toolbar { gap:0; }
+.overview-layout { display:grid; gap:26px; }
+.overview-matrix { min-width:0; }
+.overview-heatmap { padding:22px; border-radius:12px; box-shadow:0 2px 6px #19373d04; }
+.overview-heatmap h3 { font-size:18px; }
+.overview-heatmap .heat-cell { border-radius:4px; }
+.overview-heatmap .heat-table { min-width:560px; }
+.assay-inspector { min-width:0; margin:0 0 12px; }
+.assay-inspector>.section-heading { align-items:center; }
+.assay-inspector h3 { font-size:23px; letter-spacing:-.025em; }
+.assay-inspector>.section-heading .eyebrow { margin-bottom:5px; font-size:10.5px; }
+.assay-inspector>.section-heading label { font-size:12px; }
+.inspector-tabs { margin:0 0 10px; }
+.figure-controls { display:flex; flex-wrap:wrap; align-items:center; justify-content:end; gap:12px; padding:0; margin:0 0 14px; }
+.figure-card,.figure-readout { border-radius:12px; box-shadow:0 2px 6px #19373d04; }
+.figure-readout { top:20px; }
+.study-details { margin-top:24px; }
+.study-details,.dashboard-analysis-register { border-top:1px solid var(--rule); padding:16px 0; }
+
+/* A single anchored settings panel, rather than several full-width accordions. */
+.figure-appearance { position:relative; flex-shrink:0; padding:0; margin:0; border:0; background:transparent; }
+.appearance-panel { position:absolute; right:0; top:calc(100% + 10px); z-index:40; width:min(650px,calc(100vw - 40px)); max-height:72vh; overflow:auto; padding:22px; background:#fff; border:1px solid var(--rule); border-radius:12px; box-shadow:0 14px 48px #19373d20; }
+.appearance-panel>header { display:flex; justify-content:space-between; align-items:start; gap:16px; margin:0 0 22px; }
+.appearance-panel h3 { margin:0; font-size:19px; }
+.appearance-panel header p { margin:5px 0 0; font-size:12px; }
+.appearance-panel h4 { margin:0 0 12px; font-size:13px; }
+.appearance-panel .appearance-options,.appearance-panel .figure-settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px 16px; margin:0 0 20px; }
+.appearance-panel label { display:grid; gap:6px; min-width:0; font-size:12px; color:var(--muted); }
+.appearance-panel select { width:100%; min-width:0; }
+.appearance-panel .inline-check { display:flex; align-self:center; align-items:center; gap:8px; color:var(--ink-soft); }
+.appearance-panel .figure-options,.appearance-panel .gene-layout-options { margin:0; padding:20px 0 0; border:0; border-top:1px solid var(--rule); }
+.appearance-panel .figure-options { background:transparent; }
+.series-color-disclosure { border-top:1px solid var(--rule); padding:16px 0; }
+.series-color-disclosure>summary { cursor:pointer; font-size:12px; color:var(--ink-soft); }
+.series-color-options { padding-top:14px; }
+.series-color-options label { display:flex; align-items:center; }
+.series-color-options label span { overflow-wrap:anywhere; }
+.appearance-reset { display:flex; flex-wrap:wrap; gap:8px; border-top:1px solid var(--rule); padding-top:16px; }
+.appearance-panel .appearance-note { margin:12px 0 0; font-size:11.5px; }
+
+/* Library and supporting views use the same surface and type rhythm. */
+.library-heading { margin-bottom:22px; }
+.library-heading h2 { font-size:32px; letter-spacing:-.04em; }
+.library-totals { margin-bottom:24px; gap:28px; }
+.library-totals strong { font-weight:600; color:var(--accent); }
+.library-toolbar { background:transparent; border:0; border-radius:0; padding:0 0 20px; border-bottom:1px solid var(--rule); }
+.library-table-wrap { border-radius:12px; }
+.library-table th { padding-top:14px; padding-bottom:14px; background:#edf2ef; font-size:11.5px; }
+.library-table td { padding-top:20px; padding-bottom:20px; }
+.library-count,.library-footnote { font-size:11.5px; }
+.experiment-open { font-weight:600; }
+.statistics-panel,.distribution-diagnostics,.plate-check-head { border-radius:12px; box-shadow:none; }
+.statistics-panel { padding:22px; }
+.statistics-panel>h3 { font-size:19px; }
+.statistics-panel>p { max-width:1000px; color:var(--muted); line-height:1.7; font-size:13px; }
+.statistics-grid { gap:16px; }
+.statistics-grid article,.diagnostic-group { border-color:var(--rule); border-radius:9px; }
+.distribution-diagnostics { padding:22px; background:#fff; }
+.diagnostic-provenance { font-size:11px !important; }
+.diagnostic-unavailable { padding:12px 14px; background:#f0f5f3; }
+.plate-check-head { padding:18px 20px; }
+.plate-values-toggle { margin-left:auto; }
+.well-presence { display:block; width:4px; height:4px; border-radius:50%; margin:auto; background:currentColor; opacity:.3; }
+.check-map .check-cell[aria-pressed=true] .well-presence { opacity:1; }
+
+@media(min-width:1700px) {
+ .overview-layout { grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); align-items:start; }
+ .overview-layout .inspector-layout { grid-template-columns:minmax(0,1fr); }
+ .overview-layout .figure-readout { position:static; }
+ .overview-layout .assay-inspector>.section-heading { min-height:58px; }
+}
+@media(max-width:1250px) {
+ .gene-panel-grid[data-columns=auto] { grid-template-columns:repeat(2,minmax(0,1fr)) !important; }
+ .review-banner { grid-template-columns:minmax(0,1fr) auto; }
+ .review-banner .status-actions { grid-column:1/-1; justify-content:end; }
+}
+@media(max-width:1100px) {
+ .workspace-rail { width:160px; flex-basis:160px; }
+ .main-panel { padding:24px; }
+ .topbar { align-items:start; }
+ .experiment-title h2 { font-size:23px; }
+ .experiment-header-actions { flex-wrap:wrap; justify-content:end; }
+ .filter-scope { flex-basis:100%; min-height:16px; }
+ .grid-reading-guide { margin-left:0; }
+}
+@media(max-width:760px) {
+ .gene-panel-grid[data-columns] { grid-template-columns:minmax(0,1fr) !important; }
+ .all-genes-controls>label:first-child { max-width:none; }
+ .all-genes-controls .view-toolbar-actions { width:100%; justify-content:end; }
+ .overview-mode .view-toolbar-actions { width:100%; justify-content:space-between; }
+}
+@media(max-width:650px) {
+ .workspace-rail { width:100%; flex-basis:auto; padding:12px 16px; }
+ .rail-upload { margin:0; }
+ .main-panel { padding:20px 16px 32px !important; }
+ .topbar { flex-direction:column; gap:14px; margin-bottom:20px; }
+ .experiment-title h2 { font-size:22px; }
+ .experiment-header-actions { align-self:stretch; justify-content:start; }
+ .experiment-summary { font-size:12px; }
+ .rename-button { opacity:1; }
+ .experiment-details-body { position:fixed; left:16px; right:16px; top:90px; width:auto; max-height:calc(100dvh - 120px); }
+ .view-tabs { gap:22px; margin:0 0 18px; }
+ .view-tabs button { font-size:12px; padding-bottom:11px; }
+ .review-banner { display:grid; grid-template-columns:minmax(0,1fr); padding:12px 14px; gap:10px; margin-bottom:18px; }
+ .review-banner .status-headline { margin:0; }
+ .status-details { grid-row:3; }
+ .status-details .status-items { position:static; width:auto; box-shadow:none; padding:12px 0 0; border:0; }
+ .review-banner .status-actions { justify-content:start; }
+ .primary-filters { gap:10px; }
+ .primary-filters>label { flex:1 1 130px; max-width:none; }
+ .primary-filters>label:nth-child(3) { flex:1 1 130px; }
+ .more-filters { flex:1 1 130px; }
+ .filter-scope { justify-content:space-between; }
+ .extended-filters { gap:16px; }
+ .extended-filters .factor-group { width:100%; }
+ .extended-filters .edit-labels { margin-left:0; }
+ .dashboard-view-toolbar { gap:10px; }
+ .view-toolbar-actions { flex-wrap:wrap; }
+ .overview-heatmap { padding:16px 12px; }
+ .overview-heatmap h3 { font-size:17px; }
+ .overview-heatmap .heat-table { min-width:560px; }
+ .overview-layout { gap:24px; }
+ .assay-inspector>.section-heading { flex-direction:row; align-items:center; }
+ .assay-inspector>.section-heading label { max-width:140px; }
+ .assay-inspector>.section-heading select { width:100%; }
+ .inspector-tabs { gap:14px; flex-wrap:nowrap; overflow-x:auto; }
+ .inspector-tabs button { flex-shrink:0; white-space:nowrap; }
+ .appearance-panel { position:fixed; inset:80px 12px auto; width:auto; max-height:calc(100dvh - 100px); padding:18px; }
+ .appearance-panel .appearance-options,.appearance-panel .figure-settings-grid { grid-template-columns:minmax(0,1fr); }
+ .library-heading h2 { font-size:28px; }
+ .library-totals { gap:12px; }
+ .library-toolbar { padding:0 0 18px; }
+ .statistics-panel,.distribution-diagnostics { padding:16px; }
+ .plate-values-toggle { margin-left:0; }
+}
+@media(prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto !important; transition:none !important; } }
+@media print {
+ .experiment-header-actions,.dashboard-toolbar,.dashboard-view-toolbar,.grid-reading-guide,.status-details { display:none !important; }
+ .overview-layout { display:block; }
+ .gene-panel { display:block; }
+ .gene-panel .figure-card { height:auto; }
+ .grid-print-key { flex-basis:100%; }
+}

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import './App.css'
 import './workflow.css'
 import './theme.css'
-import { ExperimentSummary, ExperimentTitle } from './ExperimentHeader'
+import './workspace.css'
+import { ExperimentHighlights, ExperimentSummary, ExperimentTitle } from './ExperimentHeader'
 import { apiErrorMessage } from './apiErrors'
 
 import type { AnalysisResult, AnalysisType, Experiment, LayoutChange, Project, RawRecord, Run, SampleMetadata, ExperimentDesign, QualityChange, ExclusionPreview } from './types'
@@ -588,12 +589,18 @@ function App() {
             <p className="eyebrow">{selectedProject?.name ?? 'qPCR results'}</p>
             {selectedExperiment?<ExperimentTitle key={`title:${selectedExperiment.id}`} name={withoutExtension(selectedExperiment.name)} onRename={renameExperiment}/>:<h2>Import your qPCR results</h2>}
             {selectedExperiment&&<ExperimentSummary experiment={selectedExperiment}/>}
-            <p className="helper-text">
-              {selectedExperiment?.parsed_summary?.record_count ?? 0} measurements · {selectedExperiment&&experimentFiles(selectedExperiment).length>1?'files':'file'} <span title={selectedExperiment?experimentFiles(selectedExperiment).join('\n'):undefined}>{selectedExperiment?experimentFiles(selectedExperiment).join(', '):''}</span>
-            </p>
-            {selectedExperiment&&loaded&&<AddPlatesPanel key={`plates:${selectedExperiment.id}`} runs={runs} onAdd={addPlates}/>}
           </div>
-          {selectedExperiment&&<button className={inSetup?'setup-toggle':'setup-toggle quiet-button'} aria-pressed={inSetup} onClick={()=>setActiveTab(layoutNeeded?'layout':hasResults&&!stability?'setup':'samples')}>Set up analysis</button>}
+          {selectedExperiment&&<div className="experiment-header-actions">
+            <details className="experiment-details"><summary>Details</summary><div className="experiment-details-body">
+              <h3>Experiment details</h3>
+              <p className="helper-text">{selectedExperiment.parsed_summary?.record_count??0} original measurements</p>
+              <h4>Source {experimentFiles(selectedExperiment).length>1?'files':'file'}</h4>
+              <ul className="experiment-sources">{experimentFiles(selectedExperiment).map(file=><li key={file}>{file}</li>)}</ul>
+              <ExperimentHighlights experiment={selectedExperiment}/>
+              {loaded&&<AddPlatesPanel key={`plates:${selectedExperiment.id}`} runs={runs} onAdd={addPlates}/>}
+            </div></details>
+            <button className={inSetup?'setup-toggle':'setup-toggle quiet-button'} aria-pressed={inSetup} onClick={()=>setActiveTab(layoutNeeded?'layout':hasResults&&!stability?'setup':'samples')}>Set up analysis</button>
+          </div>}
         </header>
         {status&&<div className="status-bar" role="status" aria-live="polite"><span>{status}</span><button className="icon-button" aria-label="Dismiss update" onClick={()=>setStatus('')}>×</button></div>}
         {backendIssue && <p className="analysis-error" role="alert">{backendIssue}</p>}
@@ -605,11 +612,11 @@ function App() {
         {loaded&&!inSetup&&<NumberSamplesStep suggestions={layoutSuggestions} problem={selectedExperiment?.numbering_problem??null} busy={numberingBusy} onNumber={()=>void changeNumbering(false)} onLayout={()=>setActiveTab('layout')}/>}
         {loaded&&!inSetup&&<NumberedSamplesNotice layouts={selectedExperiment?.auto_layouts??[]} busy={numberingBusy} onRename={()=>setActiveTab('layout')} onUndo={()=>void changeNumbering(true)} onAnswer={answerLate}/>}
         {loaded&&!inSetup&&layoutNeeded&&!layoutSuggestions.length&&<section className="next-step"><div><p className="eyebrow">Next step</p><h3>Name the samples on the plate</h3><p>The instrument export does not say which sample is in which well: {layoutChecks.find(check=>check.blocking)?.message??layoutChecks[0]?.message} Fill the wells from a list, paste your plate layout from Excel, or name selected wells.</p></div><button onClick={()=>setActiveTab('layout')}>Set up plate layout</button></section>}
-        {loaded&&!inSetup&&!hasResults&&!layoutNeeded&&!stability&&!typeQuestion&&<section className="next-step"><div><p className="eyebrow">Next step</p><h3>Set up normalized expression</h3><p>Raw Ct values are ready below. Two short steps turn them into fold changes: check each sample’s condition and time point, then choose reference genes and baseline samples.</p></div><button onClick={()=>setActiveTab('samples')}>Start setup</button></section>}
+        {loaded&&!inSetup&&activeTab!=='genes'&&!hasResults&&!layoutNeeded&&!stability&&!typeQuestion&&<section className="next-step"><div><p className="eyebrow">Next step</p><h3>Set up normalized expression</h3><p>Raw Ct values are imported, but fold changes have not been calculated in this workspace. Check the sample conditions and time points, then choose reference genes and baseline samples in Normalization. Calculate each run separately.</p></div><button onClick={()=>setActiveTab('samples')}>Start setup</button></section>}
         {selectedExperiment && loaded && <div hidden={activeTab !== 'dashboard'&&activeTab !== 'genes'}>
           <Dashboard allGenes={activeTab==='genes'} key={selectedExperiment.id} experiment={selectedExperiment} versions={versions} currentResult={analysisResult}
             referenceAssays={analysisConfig.referenceAssays} annotations={sampleInstances} onQuality={saveQuality} onPreview={previewQuality} onRebuild={rebuildAnalyses} draftDirty={draftDirty}
-            onSetup={() => setActiveTab(stability?'samples':'setup')} onSamples={()=>setActiveTab('samples')} onLayout={()=>setActiveTab('layout')} onStabilityGenes={genes=>saveAnalysisType('reference_stability',genes)} snapshot={historicalResult} onClearSnapshot={()=>setHistoricalResult(null)} onStatistics={result=>{setSelectedStatistics(result);setActiveTab('statistics')}} />
+            onSetup={run=>{if(run)selectRun(run);setActiveTab(stability?'samples':'setup')}} onSamples={()=>setActiveTab('samples')} onLayout={()=>setActiveTab('layout')} onStabilityGenes={genes=>saveAnalysisType('reference_stability',genes)} snapshot={historicalResult} onClearSnapshot={()=>setHistoricalResult(null)} onStatistics={result=>{setSelectedStatistics(result);setActiveTab('statistics')}} />
         </div>}
         {selectedExperiment&&loaded&&activeTab==='plate'&&<PlateCheck key={selectedExperiment.id} experiment={selectedExperiment} annotations={sampleInstances} initialRun={selectedRunId} onLayout={()=>setActiveTab('layout')} onSamples={()=>setActiveTab('samples')}/>}
         {activeTab === 'statistics' && <StatisticsView analyses={[...(analysisResult?[analysisResult]:[]),...versions.map(v=>v.result)]} runs={runs} selected={selectedStatistics??analysisResult} onSelect={setSelectedStatistics} currentRevision={selectedExperiment?.context_revision??0}/>}

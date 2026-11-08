@@ -153,19 +153,18 @@ export function PublicationFigure({title, subtitle, observations, kind, bars=fal
     temporal&&categories.length>1&&!bars?'Lines connect condition means; pairing is not inferred.':'Pairing is not inferred.',
     spacingNote,countNote,reviewNote].filter(Boolean)
 
-  function layout(chrome:Chrome) {
+  function layout(chrome:Chrome,responsive=false) {
     const full=chrome==='full'
-    // Exports keep their paper width; grid panels draw at the card's own pixel width so text stays true to size.
-    // Printed panels use the single-column scale so text stays at 8 pt on paper.
-    const W=full?width:printing?360:Math.max(260,Math.min(900,viewportWidth??360))
+    // Screen text stays at its intended pixel size. Exports retain their publication dimensions.
+    const W=full&&!responsive?width:printing?360:Math.max(260,Math.min(900,viewportWidth??(full?width:360)))
     const yTitleLines=full?wrap(yTitle,36):[]
     const tickSpace=Math.max(14,...ticks.map(tick=>textWidth(tickLabel(tick),T.tick)))+(theme.tickDirection==='out'?11:8)
     const left=Math.round(Math.max(full?(preset==='single'?54:64):34,tickSpace+(full?yTitleLines.length*(T.axisTitle+3)+12:4)))
-    const labels=full&&directLabels?series.map(s=>labelFor(s.label)):[]
+    const labels=full&&directLabels&&(!responsive||W>=560)?series.map(s=>labelFor(s.label)):[]
     const right=W-(full?14:10)-(labels.length?Math.min(200,Math.max(...labels.map(label=>textWidth(label,T.legend)*1.1))+14):0)
     const subtitleLines=full?wrap(subtitle,Math.floor((W-left-14)/(T.subtitle*.56))):[]
     const legendTop=full?18+T.title+subtitleLines.length*(T.subtitle+4)+12:0
-    const legend=(full&&!directLabels?primaryLegend:[]).map(item=>({...item,lines:wrap(item.label,Math.max(12,Math.floor((right-left-24)/(T.legend*.56))))}))
+    const legend=(full&&!labels.length?primaryLegend:[]).map(item=>({...item,lines:wrap(item.label,Math.max(12,Math.floor((right-left-24)/(T.legend*.56))))}))
     const legendFlow=flowLegend(legend.map(item=>24+Math.max(...item.lines.map(line=>textWidth(line,T.legend)))),right-left,18)
     const rowLines=Array.from({length:legendFlow.rows},(_,row)=>Math.max(1,...legend.filter((_,i)=>legendFlow.items[i].row===row).map(item=>item.lines.length)))
     const rowTops=rowLines.map((_,row)=>rowLines.slice(0,row).reduce((sum,lines)=>sum+lines*16+2,0))
@@ -206,7 +205,7 @@ export function PublicationFigure({title, subtitle, observations, kind, bars=fal
       viewTop:full?(legendFlow.rows?legendTop-6:top-14):0,viewBottom:full?axisBottom+14:height}
   }
   const fullFrame=layout('full')
-  const screenFrame=compactDisplay?layout('panel'):fullFrame
+  const screenFrame=printing&&!compactDisplay?fullFrame:layout(compactDisplay?'panel':'full',true)
   const exportName=`${title.replace(/[^a-z0-9]+/gi,'-')}-${kind}`
   const dataRows:Record<string,unknown>[]=observations.flatMap(o=>(o.data??o.values.map(value=>({sample:o.sample,run:o.run,condition:o.categoryLabel,value,source:o.source}))).map(row=>{const data=row as Record<string,unknown>,value=kind==='ct'?data.ct??data.value:data.fold_change??data.value;return {...data,visible_under_axis_limits:data.plotted!==false&&typeof value==='number'&&inX(o.category)&&!outside(value)}}))
   const yLimits=[axis.dataLow,axis.dataHigh]
@@ -304,8 +303,8 @@ export function PublicationFigure({title, subtitle, observations, kind, bars=fal
     {exportStatus&&<p className="figure-export-status" role="status">{exportStatus}</p>}
     {!finite.length ? <p className="figure-empty">{emptyMessage ?? `No numeric ${kind==='ct'?'Ct values':'normalized results'} in this selection. Missing / undetermined: ${missing}.`}</p>
      : compactDisplay ? <div className="figure-scroll plot-viewport" ref={viewportRef}>{renderSvg(screenFrame)}</div>
-     : <div className="figure-scroll plot-viewport" style={{aspectRatio:`${width}/${fullFrame.viewBottom-fullFrame.viewTop}`,overflow:'hidden',padding:0}}>{renderSvg(fullFrame,svg,true)}</div>}
-    {compactDisplay&&exportOpen&&finite.length>0&&<div className="figure-export-source" hidden>{renderSvg(fullFrame,svg)}</div>}
+     : <div className="figure-scroll plot-viewport" ref={viewportRef} style={{aspectRatio:`${screenFrame.width}/${screenFrame.viewBottom-screenFrame.viewTop}`,overflow:'hidden',padding:0}}>{renderSvg(screenFrame,undefined,true)}</div>}
+    {exportOpen&&finite.length>0&&<div className="figure-export-source" hidden>{renderSvg(fullFrame,svg)}</div>}
     {extraLegend.length>0&&<details className="figure-color-key screen-only"><summary>Point color key · {extraLegend.length} labels</summary><div>{extraLegend.map(item=><p key={item.key}><span style={{background:item.color}}/>{item.label}</p>)}</div></details>}
     {!compactDisplay&&<div className="figure-foot screen-only">
       {finite.length>0&&<p className="compact-figure-key">{logY?'Geometric mean ×/÷ SD · log₂ scale':'Mean ± SD'} · {directLabels?`n = ${uniformN} biological samples per point`:'n = biological samples'}{kind==='expression'?' · dashed line = 1×':''}{temporal?proportional?' · time to scale':' · times equally spaced':''}</p>}
